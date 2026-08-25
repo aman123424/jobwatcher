@@ -27,17 +27,17 @@ ONE FULL RUN, STEP BY STEP:
      everything that was open today.
 
 RUN IT:
-    python3 main.py
+    python main.py
 
-You'd normally run this on a schedule (e.g. every 15-30 minutes) via
-cron, a scheduled cloud function, or similar — see README.md.
+I'd normally run this on a schedule (e.g. every 15-30 minutes) via
+cron, a scheduled cloud function, or similar.
 """
 
 import csv
 import os
 from datetime import datetime, timezone
 
-from companies import TIER1_COMPANIES
+from companies import TIER1_COMPANIES, TIER2_COMPANIES, CUSTOM_COMPANIES
 from fetchers import FETCHERS
 from scoring import score_job, is_relevant_title
 from state import load_seen, save_seen, split_new_jobs
@@ -48,9 +48,9 @@ from state import load_seen, save_seen, split_new_jobs
 # By the time fetch_all_jobs() runs, every company is just
 # (display_name, platform, slug) and FETCHERS[platform] handles the
 # rest, Tier 1 or Tier 2 alike.
-ALL_COMPANIES = TIER1_COMPANIES
+ALL_COMPANIES = TIER1_COMPANIES + TIER2_COMPANIES + CUSTOM_COMPANIES
 
-MIN_SCORE = 50  # only notify for score >= 50/100.
+MIN_SCORE = 50  #only notify for score >= 50/100.
 
 LOG_FILE = os.path.join(os.path.dirname(__file__), "matches_log.csv")
 
@@ -112,7 +112,8 @@ def run() -> None:
     print(f"=== jobwatch run started {datetime.now(timezone.utc).isoformat()} ===")
 
     print(f"\nFetching current open jobs from {len(ALL_COMPANIES)} companies "
-          f"({len(TIER1_COMPANIES)} Tier 1)...")
+          f"({len(TIER1_COMPANIES)} Tier 1 + {len(TIER2_COMPANIES)} Tier 2 "
+          f"+ {len(CUSTOM_COMPANIES)} custom)...")
     all_jobs = fetch_all_jobs()
     print(f"\nTotal open jobs fetched across all companies: {len(all_jobs)}")
 
@@ -130,7 +131,7 @@ def run() -> None:
     if new_matches:
         print(f"\n{'='*70}\nNEW MATCHES\n{'='*70}")
         # Highest score first, so the strongest fits are the first
-        # thing Aman sees, not buried at the bottom of the list.
+        # thing I see, not buried at the bottom of the list.
         for job in sorted(new_matches, key=lambda j: -j["match_score"]):
             print(f"\n[{job['match_score']}/100] {job['title']} — {job['source_company']}")
             print(f"  Location: {job['location']}  |  Seniority: {job['seniority']}")
@@ -152,9 +153,9 @@ if __name__ == "__main__":
 # NEXT STEPS (not built yet, deliberately deferred):
 #
 # 1. NOTIFICATION CHANNEL. Right now "new matches" just print to the
-#    terminal and append to a CSV. That only helps if you're watching
+#    terminal and append to a CSV. That only helps if I'm watching
 #    the terminal. The next real upgrade is pushing new matches
-#    somewhere you'll actually see promptly without checking manually
+#    somewhere I'll actually see promptly without checking manually
 #    — e.g. a Telegram bot message, an email, or a simple desktop
 #    notification. This is a clean, separate next piece: it would slot
 #    in right where `append_to_log(new_matches)` is called above,
