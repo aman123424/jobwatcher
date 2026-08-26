@@ -42,8 +42,9 @@ one bad company crash the whole run. main.py additionally logs WHICH
 company failed, so failures are visible, not silently swallowed.
 """
 
+import re
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 # A single shared "session" object, reused across all requests.
 # WHY: each request through a session can reuse the same underlying
@@ -89,6 +90,22 @@ def _safe_get(url, **kwargs):
         # json() raises ValueError if the response body isn't valid
         # JSON at all (e.g. the API returned an HTML error page).
         print(f"  [WARN] bad JSON from {url}: {e}")
+        return None
+
+
+def _safe_get_text(url, **kwargs):
+    """
+    Same idea as _safe_get, but for endpoints that return HTML rather
+    than JSON (e.g. a server-rendered page we need to scrape a value
+    out of, like DE Shaw's Next.js buildId below). Returns the raw
+    response text on success, or None on any failure.
+    """
+    try:
+        resp = SESSION.get(url, timeout=TIMEOUT, **kwargs)
+        resp.raise_for_status()
+        return resp.text
+    except requests.exceptions.RequestException as e:
+        print(f"  [WARN] request failed for {url}: {e}")
         return None
 
 
@@ -203,6 +220,55 @@ def fetch_ashby(display_name: str, slug: str) -> list[dict]:
     return jobs
 
 
+# --- Early-stop-on-staleness, for platforms confirmed sorted newest-first ---
+#
+# WHY THIS EXISTS: state.py's seen-job diffing already guarantees no
+# posting gets missed within a day, provided this runs every 15-30
+# minutes as designed (see main.py) - a new posting is caught the very
+# next run regardless of anything below. This is a SPEED optimization,
+# not a correctness fix: several companies (Trimble, ABB, Target,
+# Airbus, ServiceNow at real volume) were paging through hundreds or
+# thousands of jobs — most of them old, already-seen postings — every
+# single run. If a platform's results are confirmed sorted newest-first,
+# we can stop paging once we're clearly past "recent" instead of
+# fetching everything every time.
+#
+# 2 days, not 1: gives a buffer against exactly-24h boundary jitter
+# between runs, and against Workday's day-level (not hour-level)
+# "postedOn" labels — a job posted at 11pm and one posted at 1am the
+# same calendar day can both say "Posted Yesterday" depending on when
+# the label was generated, so treating "yesterday" as still worth
+# fetching is the safe direction to round.
+FRESHNESS_WINDOW_DAYS = 2
+
+_WORKDAY_POSTED_ON_RE = re.compile(r"posted\s+(today|yesterday|(\d+)\+?\s+days?\s+ago)", re.IGNORECASE)
+
+
+def _workday_posted_on_days(posted_on: str):
+    """
+    Parse Workday's relative "postedOn" label into an integer day
+    count — "Posted Today" -> 0, "Posted Yesterday" -> 1, "Posted 5
+    Days Ago" -> 5, "Posted 30+ Days Ago" -> 30. Confirmed live against
+    real labels from Visa and Barclays on 2026-08-26 (including the
+    "30+" form, which needed the trailing "+" handled explicitly).
+
+    Returns None for anything that doesn't match — callers should
+    treat that as "can't tell, don't use it to stop early" rather than
+    assuming it means "old" or "new".
+    """
+    if not posted_on:
+        return None
+    m = _WORKDAY_POSTED_ON_RE.search(posted_on)
+    if not m:
+        return None
+    word = m.group(1).lower()
+    if word == "today":
+        return 0
+    if word == "yesterday":
+        return 1
+    return int(m.group(2))
+
+
 def fetch_smartrecruiters(display_name: str, company_id: str) -> list[dict]:
     """
     SmartRecruiters' public Postings API.
@@ -238,7 +304,20 @@ def fetch_smartrecruiters(display_name: str, company_id: str) -> list[dict]:
        marginal benefit here — so for now we score SmartRecruiters
        jobs on title + department/function only, and note that as a
        known limitation (see scoring.py).
+
+    3. EARLY-STOP ON STALENESS. Confirmed live on 2026-08-26: results
+       come back sorted by releasedDate, newest first (unlike
+       Greenhouse/Lever/Ashby, which are NOT sorted this way — verified
+       and rejected before landing on this). A "?updatedAfter=..."
+       query param LOOKED like the obvious fix but was tested live and
+       is a silent no-op (totalFound didn't budge). So instead: once a
+       full page's postings are all older than FRESHNESS_WINDOW_DAYS,
+       stop — this is a real, evidence-backed shortcut, not a guess.
+       See the FRESHNESS_WINDOW_DAYS comment above for why "why not
+       just miss nothing" isn't at risk here.
     """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=FRESHNESS_WINDOW_DAYS)
+
     jobs = []
     offset = 0
     page_size = 100
@@ -271,6 +350,7 @@ def fetch_smartrecruiters(display_name: str, company_id: str) -> list[dict]:
         if not content:
             break
 
+        page_has_recent_job = False
         for j in content:
             # "ref" is a STRING (SmartRecruiters' own API detail URL for
             # this posting), not a dict — calling .get("jobAd") on it is
@@ -280,6 +360,16 @@ def fetch_smartrecruiters(display_name: str, company_id: str) -> list[dict]:
             job_id = j.get("id", "")
             url = f"https://jobs.smartrecruiters.com/{company_identifier}/{job_id}" if company_identifier and job_id else ""
 
+            released_date = j.get("releasedDate")
+            job_dt = None
+            if released_date:
+                try:
+                    job_dt = datetime.fromisoformat(released_date.replace("Z", "+00:00"))
+                except ValueError:
+                    pass  # unparseable date - don't let it affect the stop decision either way
+            if job_dt is None or job_dt >= cutoff:
+                page_has_recent_job = True
+
             jobs.append({
                 "source_company": display_name,
                 "platform": "smartrecruiters",
@@ -287,9 +377,16 @@ def fetch_smartrecruiters(display_name: str, company_id: str) -> list[dict]:
                 "title": j.get("name", ""),
                 "location": (j.get("location") or {}).get("city", ""),
                 "url": url,
-                "updated_at": j.get("releasedDate"),
+                "updated_at": released_date,
                 "raw_description": (j.get("function") or {}).get("label", ""),
             })
+
+        # EARLY STOP: once a whole page is older than the freshness
+        # window, every later page is even older (confirmed sorted
+        # newest-first) - no point fetching them every run when
+        # state.py already knows about all of them from past runs.
+        if not page_has_recent_job:
+            break
 
         offset += page_size
         if offset >= data.get("totalFound", 0):
@@ -305,17 +402,14 @@ def fetch_workday(display_name: str, tenant_wd_site: str) -> list[dict]:
     it's noticeably less clean than Greenhouse/Lever/Ashby/
     SmartRecruiters, in three specific ways explained inline below.
 
-    IMPORTANT — UNLIKE EVERY OTHER FETCH_* FUNCTION IN THIS FILE, THIS
-    ONE HAS NOT BEEN VALIDATED AGAINST A LIVE RESPONSE. Workday's
-    domain isn't reachable from my sandbox any more than Greenhouse's
-    was, and unlike Greenhouse/Lever/Ashby I didn't have independent
-    third-party documentation confirming the exact field names for
-    Workday specifically. This function is written against the
-    well-known, widely-reverse-engineered shape of this endpoint (the
-    same pattern countless public Workday scrapers use) — but "widely
-    known" is not the same as "verified for OUR specific tenants."
-    Treat your first `python3 fetchers.py` run against a Workday
-    company with real suspicion, more than you did for Tier 1.
+    STATUS: live-tested and working (this docstring previously said
+    otherwise — that was written before Aman ran it for real; leaving
+    this note rather than pretending it was always known-good, since
+    the whole point of these docstrings is to reflect what's actually
+    been verified, not what was hoped). Confirmed against KLA (49/49
+    recovered) and APTIV (731/731 across 37 paginated requests) — see
+    PROJECT_LOG.md for the full debugging trail that got it there,
+    including the "total" field bug fixed below.
 
     ARGUMENT FORMAT: tenant_wd_site is the pipe-separated 3-part
     identifier from companies.py, e.g. "visa|wd5|visa" meaning:
@@ -352,6 +446,17 @@ def fetch_workday(display_name: str, tenant_wd_site: str) -> list[dict]:
          fine, that's the likely explanation, and there's no simple
          fix for it (it would need a headless browser, not a plain
          HTTP request — a much bigger piece of work, not attempted here).
+
+    EARLY STOP ON STALENESS (added 2026-08-26): confirmed live that
+    Workday returns postings sorted newest-first — offset=0 was all
+    "Posted Today", offset=100 had shifted to "Posted 5-6 Days Ago" on
+    the same tenant. That's what makes stopping early here safe rather
+    than a guess. This matters most for the biggest tenants (Trimble,
+    ABB, Target, Airbus all hit the 2000-job safety cap on the first
+    live run of this system) — without early-stop, a company with a
+    genuinely huge total backlog gets its FETCH arbitrarily truncated
+    at 2000 by that cap, which is worse than stopping deliberately once
+    postings are confirmed stale (see FRESHNESS_WINDOW_DAYS above).
     """
     parts = tenant_wd_site.split("|")
     if len(parts) != 3:
@@ -403,8 +508,17 @@ def fetch_workday(display_name: str, tenant_wd_site: str) -> list[dict]:
         # content, never on this field. See git history / conversation
         # log if you need the full debugging trail that found this.
 
+        page_has_recent_job = False
         for j in postings:
             external_path = j.get("externalPath", "")
+            posted_on = j.get("postedOn")
+            days_old = _workday_posted_on_days(posted_on)
+            # days_old is None for an unrecognized label (Workday adds
+            # new phrasing occasionally) - treat "can't tell" as recent
+            # so we never stop early on a guess.
+            if days_old is None or days_old < FRESHNESS_WINDOW_DAYS:
+                page_has_recent_job = True
+
             jobs.append({
                 "source_company": display_name,
                 "platform": "workday",
@@ -418,7 +532,7 @@ def fetch_workday(display_name: str, tenant_wd_site: str) -> list[dict]:
                 "title": j.get("title", ""),
                 "location": j.get("locationsText", ""),
                 "url": f"https://{tenant}.{wd_num}.myworkdayjobs.com/{site}{external_path}",
-                "updated_at": j.get("postedOn"),  # relative string, see docstring limitation 1
+                "updated_at": posted_on,  # relative string, see docstring limitation 1
                 "raw_description": j.get("title", ""),  # see docstring limitation 2 - title only
             })
 
@@ -430,6 +544,13 @@ def fetch_workday(display_name: str, tenant_wd_site: str) -> list[dict]:
         # discarded as "we're done" the instant total lied. A short
         # page is a fact we observed directly — nothing to trust.
         if len(postings) < page_size:
+            break
+
+        # EARLY STOP: once a whole page has nothing recent left on it,
+        # every later page is even older (confirmed sorted newest-first
+        # — see docstring). No need to keep fetching postings state.py
+        # already knows about from past runs.
+        if not page_has_recent_job:
             break
 
         offset += page_size
@@ -454,57 +575,282 @@ def _epoch_seconds_to_iso(ts):
         return None
 
 
-def fetch_qualcomm(display_name: str, base_domain: str) -> list[dict]:
+def fetch_pcsx(display_name: str, host_domain_location: str) -> list[dict]:
     """
-    Qualcomm-specific — their real career site runs a separate search
-    layer at careers.qualcomm.com/api/pcsx/search, not the generic
-    Workday wday/cxs pattern (which 422'd both runs). Built from
-    Aman's confirmed real response, not guessed. One-off, not a
-    reusable pattern (no evidence yet other companies share it).
+    "pcsx" is a career-page search widget shared by MULTIPLE companies —
+    first found on Qualcomm's site (as "qualcomm_custom", back when it
+    looked like a one-off), then confirmed byte-for-byte identical (same
+    /api/pcsx/search path, same response shape: data.positions,
+    data.count, id/name/locations/postedTs/department/positionUrl) on
+    Microsoft's career site too, just under a different subdomain. This
+    is a real vendor product, not something either company built
+    themselves — worth checking any new "Custom Career Site" company
+    against this pattern before assuming it needs a fully bespoke
+    fetcher. Confirmed live for both via direct request on 2026-08-26.
 
-    &location=India is hardcoded — part of the confirmed working URL,
-    kept deliberately so Qualcomm's own search filters for us.
+    ARGUMENT FORMAT: pipe-separated "host|domain[|location[|queries]]", e.g.
+        "careers.qualcomm.com|qualcomm.com|India"
+        "apply.careers.microsoft.com|microsoft.com|India|software,backend,frontend,full stack"
+      - host: the subdomain that actually serves /api/pcsx/search —
+              varies per company, NOT always "careers.{domain}"
+              (Microsoft's is "apply.careers.microsoft.com").
+      - domain: the `domain=` query param the search API expects.
+      - location: optional location filter. Qualcomm's original
+        confirmed-working URL had "India" hardcoded; Microsoft's bare
+        URL (no location) returned fine too — so it's genuinely
+        optional, unlike domain/host.
+      - queries: optional COMMA-separated list of keywords. Added after
+        Microsoft's FIRST live run here pulled 2,000+ jobs and hit the
+        safety cap — an unfiltered pcsx search returns EVERY open role
+        at the company (Procurement Manager, retail roles, etc.), not
+        just engineering ones. A single "software engineer" keyword
+        fixed that (confirmed 113 for Microsoft), but a single keyword
+        also risks missing real matches titled "Backend Developer" or
+        "Full Stack Engineer" with no literal "software" in the title.
+        So: run one search PER keyword and merge by job_id (a real
+        posting matching more than one keyword — plausible, e.g.
+        "Full Stack Software Engineer" — only gets counted once).
+        Left Qualcomm on a single unfiltered pass since its existing
+        India-only filter already keeps it to a reasonable ~540 without
+        needing this at all — no reason to touch what already worked.
 
-    Page size (10) is assumed from the one observed response — no
-    explicit page-size param was in the confirmed URL.
+    NO RELIABLE DATE SORT FOUND: unlike fetch_workday/
+    fetch_smartrecruiters below, `sort_by` was tested live with
+    several guessed values (postedDate, recent, date) against real
+    postedTs timestamps and every one returned results in the exact
+    same (non-chronological) order as the default "match" — so no
+    early-stop-on-staleness here. Fine in practice: even the largest
+    confirmed pcsx company (Qualcomm, ~540) pages fully in well under a
+    minute, nowhere near Workday's multi-thousand-job scale that made
+    early-stop worth building there.
+
+    Page size (10) is assumed from the observed responses — no explicit
+    page-size param appears in either company's URL.
     """
+    parts = host_domain_location.split("|")
+    if len(parts) < 2:
+        print(f"  [WARN] {display_name}: malformed pcsx identifier "
+              f"'{host_domain_location}' (expected host|domain[|location[|queries]]) - skipping")
+        return []
+    host, domain = parts[0], parts[1]
+    location = parts[2] if len(parts) > 2 else ""
+    queries = [q.strip() for q in parts[3].split(",")] if len(parts) > 3 and parts[3] else [""]
+
+    jobs_by_id = {}
+    for query in queries:
+        start = 0
+        page_size = 10
+
+        while True:
+            url = (
+                f"https://{host}/api/pcsx/search"
+                f"?domain={domain}&query={query}&location={location}&start={start}&sort_by=match&"
+            )
+            data = _safe_get(url)
+            if not data or not isinstance(data, dict):
+                break
+
+            positions = (data.get("data") or {}).get("positions", [])
+            if not positions:
+                break
+
+            for p in positions:
+                job_id = str(p.get("id", ""))
+                position_url = p.get("positionUrl", "")
+                locations = p.get("locations", [])
+                # De-dupe across the multiple keyword searches above -
+                # a job matching both "backend" and "software" would
+                # otherwise get fetched (and later scored) twice.
+                jobs_by_id[job_id] = {
+                    "source_company": display_name,
+                    "platform": "pcsx",
+                    "job_id": job_id,
+                    "title": p.get("name", ""),
+                    "location": ", ".join(locations) if isinstance(locations, list) else (locations or ""),
+                    "url": f"https://{host}{position_url}" if position_url else "",
+                    "updated_at": _epoch_seconds_to_iso(p.get("postedTs")),
+                    "raw_description": p.get("department", ""),
+                }
+
+            total_count = (data.get("data") or {}).get("count", 0)
+            start += page_size
+            if start >= total_count:
+                break
+            if start > 2000:
+                print(f"  [WARN] {display_name}: stopped after 2000 jobs (safety cap) for query '{query}'")
+                break
+
+    return list(jobs_by_id.values())
+
+
+def fetch_amazon(display_name: str, country_base_query: str) -> list[dict]:
+    """
+    Amazon's own jobs-search JSON API — the exact same endpoint
+    amazon.jobs' own frontend calls. Confirmed live via direct request
+    on 2026-08-26: clean GET, no auth, real field names verified against
+    an actual response (id_icims, title, normalized_location, job_path,
+    posted_date, description_short) — same reliability tier as
+    Greenhouse/Lever/Ashby despite Amazon being a "Custom Career Site"
+    entry in the company list.
+
+    URL shape:
+        https://www.amazon.jobs/en/search.json
+            ?offset={n}&result_limit=100&country={ISO3}&base_query={keyword}
+
+    ARGUMENT FORMAT: pipe-separated "country|base_queries", e.g.
+      "IND|software,backend,frontend,full stack".
+      - country is an ISO3 code (IND, USA, ...) - THIS is the field that
+        actually filters. `loc_query` (used in the first version of this
+        fetcher) looked like it worked because "hits" stayed in a
+        plausible range either way, but a live run on 2026-08-26 showed
+        real non-India jobs (Sydney, San Francisco, Haifa) coming back
+        with loc_query=India set - it's a relevance HINT, not a filter,
+        and silently does nothing. Confirmed the real fix live: only
+        `country=IND` (or `normalized_country_code[]=IND`) actually
+        narrows results - IND-only hits dropped from 2,099 to 328 for
+        "software engineer", and every sample result was genuinely IND.
+      - base_queries is a COMMA-separated list of keywords, same reason
+        and same merge-by-job_id de-dupe as fetch_pcsx above (a single
+        "software engineer" keyword risks missing "Backend Developer"-
+        style titles with no literal "software" in them).
+
+    "hits" is Amazon's own reported total, confirmed accurate against
+    the real (now properly country-filtered) result count.
+
+    EARLY STOP ON STALENESS (added 2026-08-26): switched `sort` from
+    "relevant" to "recent" - confirmed live this returns results in
+    real (if only day-granular, not exact-time) descending date order,
+    unlike "relevant" which is scattered across many months. Once a
+    full page's posted_date values are all older than
+    FRESHNESS_WINDOW_DAYS, stop - later pages are guaranteed even
+    older. Day-granularity (not hour) is exactly why
+    FRESHNESS_WINDOW_DAYS uses a 2-day buffer rather than 1: two jobs
+    posted hours apart near a day boundary can still show the same
+    calendar date, so treating "yesterday" as still worth fetching
+    is the safe direction to round.
+    """
+    parts = country_base_query.split("|")
+    country = parts[0] if len(parts) > 0 else ""
+    base_queries = [q.strip() for q in parts[1].split(",")] if len(parts) > 1 and parts[1] else [""]
+
+    cutoff_date = (datetime.now(timezone.utc) - timedelta(days=FRESHNESS_WINDOW_DAYS)).date()
+
+    jobs_by_id = {}
+    for base_query in base_queries:
+        offset = 0
+        page_size = 100
+
+        while True:
+            url = (
+                "https://www.amazon.jobs/en/search.json"
+                f"?offset={offset}&result_limit={page_size}&sort=recent"
+                f"&country={country}&base_query={base_query}"
+            )
+            data = _safe_get(url)
+            if not data or not isinstance(data, dict):
+                break
+
+            job_list = data.get("jobs", [])
+            if not job_list:
+                break
+
+            page_has_recent_job = False
+            for j in job_list:
+                job_id = str(j.get("id_icims", ""))
+                job_path = j.get("job_path", "")
+                posted_date = j.get("posted_date")  # human string e.g. "April 9, 2026", not ISO
+                try:
+                    job_date = datetime.strptime(posted_date, "%B %d, %Y").date() if posted_date else None
+                except ValueError:
+                    job_date = None  # unparseable - don't let it affect the stop decision either way
+                if job_date is None or job_date >= cutoff_date:
+                    page_has_recent_job = True
+
+                # De-dupe across the multiple keyword searches above.
+                jobs_by_id[job_id] = {
+                    "source_company": display_name,
+                    "platform": "amazon",
+                    "job_id": job_id,
+                    "title": j.get("title", ""),
+                    "location": j.get("normalized_location", ""),
+                    "url": f"https://www.amazon.jobs{job_path}" if job_path else "",
+                    "updated_at": posted_date,
+                    "raw_description": j.get("description_short") or j.get("description", ""),
+                }
+
+            if not page_has_recent_job:
+                break  # EARLY STOP: rest of this keyword's results are even older
+
+            offset += page_size
+            if offset >= data.get("hits", 0):
+                break
+            if offset > 5000:
+                print(f"  [WARN] {display_name}: stopped after 5000 jobs (safety cap) for query '{base_query}'")
+                break
+
+    return list(jobs_by_id.values())
+
+
+_NEXT_BUILD_ID_RE = re.compile(r'"buildId":"([^"]+)"')
+
+
+def fetch_deshaw(display_name: str, base_domain: str) -> list[dict]:
+    """
+    D. E. Shaw's careers page is server-rendered by Next.js, and its
+    full job list — title, location, full description HTML — is
+    embedded directly in the page's own SSR data payload. There's no
+    separate ATS API to call; the "API" IS the page's own data source.
+
+    TWO-STEP FETCH, because that data lives behind a build-specific URL:
+      1. GET the real careers page and pull Next.js's current "buildId"
+         out of the embedded __NEXT_DATA__ script tag. This ID changes
+         every time D. E. Shaw redeploys the site, so it can't be
+         hardcoded — has to be read fresh each run, same principle as
+         Walmart/Rippling's identical Next.js pattern (checked but not
+         pursued further for those two — see PROJECT_LOG for why).
+      2. GET /_next/data/{buildId}/en/careers.json, which returns
+         exactly what the page itself renders from.
+
+    Confirmed live end-to-end on 2026-08-26: buildId extraction, the
+    resulting careers.json fetch, and the job-detail URL pattern
+    (/careers/open-positions/{jobUrl}) all verified against real
+    responses. 75 open roles recovered in one response at last check —
+    small enough that no pagination logic was needed; if that ever
+    changes, this will need revisiting (the response gave no visible
+    "total" or paging field to test against).
+    """
+    html = _safe_get_text(f"https://www.{base_domain}/careers/open-positions")
+    if not html:
+        return []
+
+    match = _NEXT_BUILD_ID_RE.search(html)
+    if not match:
+        print(f"  [WARN] {display_name}: couldn't find Next.js buildId on the "
+              f"careers page - site structure may have changed")
+        return []
+    build_id = match.group(1)
+
+    data = _safe_get(f"https://www.{base_domain}/_next/data/{build_id}/en/careers.json")
+    if not data or not isinstance(data, dict):
+        return []
+
+    regular_jobs = ((data.get("pageProps") or {}).get("regularJobs")) or []
+
     jobs = []
-    start = 0
-    page_size = 10
-
-    while True:
-        url = (
-            f"https://careers.{base_domain}/api/pcsx/search"
-            f"?domain={base_domain}&query=&location=India&start={start}&sort_by=match&"
-        )
-        data = _safe_get(url)
-        if not data or not isinstance(data, dict):
-            break
-
-        positions = (data.get("data") or {}).get("positions", [])
-        if not positions:
-            break
-
-        for p in positions:
-            position_url = p.get("positionUrl", "")
-            jobs.append({
-                "source_company": display_name,
-                "platform": "qualcomm_custom",
-                "job_id": str(p.get("id", "")),
-                "title": p.get("name", ""),
-                "location": ", ".join(p.get("locations", [])),
-                "url": f"https://careers.{base_domain}{position_url}" if position_url else "",
-                "updated_at": _epoch_seconds_to_iso(p.get("postedTs")),
-                "raw_description": p.get("department", ""),
-            })
-
-        total_count = (data.get("data") or {}).get("count", 0)
-        start += page_size
-        if start >= total_count:
-            break
-        if start > 2000:
-            print(f"  [WARN] {display_name}: stopped after 2000 jobs (safety cap)")
-            break
+    for entry in regular_jobs:
+        d = entry.get("data", {})
+        locations = (d.get("jobMetadata") or {}).get("jobLocations") or []
+        job_url = d.get("jobUrl", "")
+        jobs.append({
+            "source_company": display_name,
+            "platform": "deshaw",
+            "job_id": str(d.get("id", "")),
+            "title": d.get("displayName", ""),
+            "location": ", ".join(loc.get("name", "") for loc in locations),
+            "url": f"https://www.{base_domain}/careers/open-positions/{job_url}" if job_url else "",
+            "updated_at": None,  # not present anywhere in this response shape
+            "raw_description": (d.get("jobDescription") or {}).get("websiteDescription", ""),
+        })
 
     return jobs
 
@@ -515,7 +861,9 @@ FETCHERS = {
     "ashby": fetch_ashby,
     "smartrecruiters": fetch_smartrecruiters,
     "workday": fetch_workday,
-    "qualcomm_custom": fetch_qualcomm,
+    "pcsx": fetch_pcsx,
+    "amazon": fetch_amazon,
+    "deshaw": fetch_deshaw,
 }
 
 

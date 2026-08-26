@@ -39,6 +39,23 @@ NOT mean the identifier is guaranteed complete or correct - 4 of the
 first 22 "confirmed" Tier 1 entries needed fixing after the very
 first live run. Treat every new addition here with the same
 skepticism until it's actually been run once successfully.
+
+CUSTOM_COMPANIES RESEARCH PASS (2026-08-26):
+Went through every "Not Fetched" company in Aman's tracker CSV,
+checking each one's real career site for a callable API the same way
+Qualcomm's fetch_qualcomm was originally found - live DevTools-style
+capture, not guessing from a company name. Found a real, working API
+for Amazon, DE Shaw, and (unexpectedly) Microsoft - Microsoft's career
+site turned out to run the EXACT SAME "pcsx" vendor platform Qualcomm
+does, just on a different subdomain, so fetch_qualcomm was
+generalized into fetch_pcsx rather than duplicated. Several more
+companies (Axis Bank/RippleHire, Pine Labs + Flipkart/TurboHire,
+Siemens + Deloitte + CornerStone/CSOD) turned out to have a real API
+too, but each needs one more piece only visible in an authenticated
+browser session (exact POST body, a bearer token, etc.) - these went
+into NEEDS_MORE_INFO with the specific blocker noted, not guessed
+into working-looking code. Full company-by-company writeup of what
+was checked and why is in the conversation this was researched in.
 """
 
 TIER1_COMPANIES = [
@@ -99,11 +116,73 @@ NEEDS_MORE_INFO = [
      "404 on live test - slug is wrong or it's not actually on Lever"),
     ("HiLabs", "unknown", "",
      "CSV note says 'Custom Career Site' - not on any Tier 1/2 platform"),
+
+    # --- Added 2026-08-26, from the "Not Fetched" CSV research pass ---
+    ("Axis Bank", "ripplehire", "axisbank.ripplehire.com, token=WIXhCuz0XRZ7H0GZCwjJ",
+     "Real API confirmed live (POST .../candidate/candidatejobsearch, 7,831 real "
+     "jobs seen in the response) - but the exact request couldn't be "
+     "reverse-engineered blind. Tried: token/companySeq in a JSON body, "
+     "form-encoded body, with session cookies from the page's own GET calls, "
+     "with a Referer header - every attempt got a generic 'An unexpected error "
+     "occurred' back. Needs Aman's DevTools 'Copy as cURL' on the real request "
+     "so the missing piece (likely a CSRF header or WAF fingerprint check) is "
+     "visible. Same vendor already flagged for Tredence - fixing one likely fixes both."),
+    ("Pine Labs", "turbohire_gateway", "pinelabs.com/api/gateway/turbo-hire",
+     "Endpoint confirmed real - a plain POST returns well-formed JSON that "
+     "matches the live browser response exactly. But Pine Labs currently has "
+     "0 open roles, so the shape of a NON-empty response (the actual job-list "
+     "field name) is unverified. Safe to build against once they have live "
+     "postings, or once captured from another company on this same "
+     "company-hosted-gateway pattern that currently has openings."),
+    ("Flipkart", "turbohire", "flipkart.turbohire.co, careerpage id 4d757ba0-3d57-448a-b82c-238ed87ac90f",
+     "Real jobs confirmed rendering on the page (multiple departments, real "
+     "open roles) but the actual data-fetch call never showed up in network "
+     "capture - likely firing from inside a Web Worker/blob URL the monitor "
+     "can't see (same blind spot hit on IBM's careers page). Blind-guessed "
+     "REST paths (apis.turbohire.co/career-page/.../jobs etc.) all 404'd to "
+     "the SPA's shell HTML instead of real data. Needs a real DevTools "
+     "Network-tab capture, not another guess."),
+    ("Siemens", "csod", "jobs.siemens.com",
+     "Runs Cornerstone OnDemand's CSOD platform (confirmed by URL shape - see "
+     "CornerStone below). Job results are returned already-rendered in the "
+     "initial SSR HTML; no separate JSON search call was ever seen firing."),
+    ("Deloitte", "csod", "apply.deloitte.com",
+     "CSV's Lever slug ('deloitte') was tested live and 404'd, confirming the "
+     "CSV's own 'unusual for a firm this size' note - Deloitte is not on Lever "
+     "at all. Real career site runs the same Cornerstone OnDemand CSOD "
+     "platform as Siemens (apply.deloitte.com/en_US/careers/SearchJobs) - "
+     "same SSR-only situation, no separate JSON call found."),
+    ("CornerStone", "csod", "cornerstone.csod.com",
+     "This is Cornerstone OnDemand itself (the HR-software vendor, hiring for "
+     "its own roles) - and it's the platform Siemens and Deloitte both run on. "
+     "Confirmed a real REST namespace exists (services/x/career-site/v1/...) "
+     "but calling it directly returns 'no Authorization header found' - needs "
+     "a bearer token that's only visible in an authenticated browser session. "
+     "One fetcher could plausibly cover all three CSOD companies above once "
+     "that token requirement is understood."),
+    ("Principias Systems", "unknown", "principiassystems.com",
+     "The domain now resolves to a parked GoDaddy placeholder page, not a "
+     "live company site at all - whatever ATS ('GreekTrust', per the CSV "
+     "note) was found there before is no longer reachable this way. Worth "
+     "double-checking this is even still a real, currently-operating company "
+     "before spending more time on it."),
 ]
 
 # This are the customs companies with their custom public API links
 CUSTOM_COMPANIES = [
-  ("Qualcomm", "qualcomm_custom", "qualcomm.com"),
+  ("Qualcomm", "pcsx", "careers.qualcomm.com|qualcomm.com|India"),
+  # Microsoft needs the query filter (unlike Qualcomm) - a first live run
+  # without one hit the 2000-job safety cap pulling EVERY open Microsoft
+  # role worldwide, not just engineering ones. Multiple keywords (not
+  # just "software engineer") so titles like "Backend Developer" with
+  # no literal "software" in them still get caught - see fetch_pcsx's
+  # docstring for the dedupe-by-job_id logic that makes this safe.
+  ("Microsoft", "pcsx", "apply.careers.microsoft.com|microsoft.com|India|software,backend,frontend,full stack"),
+  # NOTE: "country" must be an ISO3 code (IND), not a name - "India"
+  # silently filters nothing. See fetch_amazon's docstring for how
+  # that was found (loc_query looked like it worked but never did).
+  ("Amazon", "amazon", "IND|software,backend,frontend,full stack"),
+  ("DE Shaw", "deshaw", "deshaw.com"),
 ]
 
 if __name__ == "__main__":
