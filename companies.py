@@ -6,6 +6,31 @@ See the module docstring history in README.md for the general idea:
 data (which companies) lives here, separate from logic (how to fetch
 them, in fetchers.py).
 
+IF YOU'RE NEW TO PYTHON, READ THIS FIRST — everything below is really
+just one big list of companies, written using two basic Python building
+blocks:
+
+  - A TUPLE is a fixed, ordered group of values written in parentheses,
+    e.g. ("Razorpay", "greenhouse", "razorpaysoftwareprivatelimited").
+    Think of it like one row in a spreadsheet with exactly 3 fixed
+    columns: (display name, which platform, that platform's identifier
+    for this company). The order always matters - fetchers.py always
+    unpacks these in that exact order.
+  - A LIST is an ordered collection written in square brackets, e.g.
+    [tuple1, tuple2, tuple3]. TIER1_COMPANIES, TIER2_COMPANIES, and
+    CUSTOM_COMPANIES below are each just a list of these 3-item tuples
+    - one tuple per company. Adding a company to this system means
+    adding one more tuple to the right list; nothing else in this file
+    needs to change.
+
+So a line like:
+    ("Groww", "greenhouse", "groww"),
+reads as: "There's a company called Groww. It's hosted on the
+Greenhouse platform. Greenhouse's own identifier for Groww's job board
+is the text 'groww'." fetchers.py's FETCHERS dictionary then looks up
+"greenhouse" to find the matching fetch_greenhouse() function, and
+calls it with ("Groww", "groww") as its two arguments.
+
 TWO TIERS NOW:
 - TIER1_COMPANIES: Greenhouse / Lever / Ashby / SmartRecruiters.
   Clean GET-based JSON APIs, no auth, well-documented, been live-
@@ -168,7 +193,12 @@ NEEDS_MORE_INFO = [
      "before spending more time on it."),
 ]
 
-# This are the customs companies with their custom public API links
+# These are the "custom" companies - ones that aren't on any of the 5
+# standard platforms above, each with its own one-off fetch_* function
+# in fetchers.py (fetch_pcsx, fetch_amazon, fetch_deshaw). Same 3-item
+# tuple shape as everywhere else, but that 3rd "identifier" slot means
+# something different for each platform - see each fetch_* function's
+# docstring in fetchers.py for exactly what its config string expects.
 CUSTOM_COMPANIES = [
   ("Qualcomm", "pcsx", "careers.qualcomm.com|qualcomm.com|India"),
   # Microsoft needs the query filter (unlike Qualcomm) - a first live run
@@ -185,7 +215,19 @@ CUSTOM_COMPANIES = [
   ("DE Shaw", "deshaw", "deshaw.com"),
 ]
 
+# `if __name__ == "__main__":` is a standard Python pattern meaning
+# "only run the code below when this file is run directly (like
+# `python companies.py`), NOT when some other file just imports data
+# from it (like `from companies import TIER1_COMPANIES` in main.py)."
+# That's why running `python companies.py` on its own does something
+# useful (a self-check) even though this file has no real "main" job -
+# its normal job is just to be imported for its data.
 if __name__ == "__main__":
+    # `assert condition, "message"` means: if condition is False, stop
+    # the program immediately and print that message as an error. It's
+    # a quick, blunt way to say "this should NEVER be true - if it is,
+    # something is badly wrong and I'd rather crash loudly right here
+    # than let broken data quietly reach fetchers.py later."
     VALID_TIER1 = {"greenhouse", "lever", "ashby", "smartrecruiters"}
     for name, platform, slug in TIER1_COMPANIES:
         assert platform in VALID_TIER1, f"{name}: unknown Tier 1 platform '{platform}'"

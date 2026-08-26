@@ -561,9 +561,6 @@ def fetch_workday(display_name: str, tenant_wd_site: str) -> list[dict]:
     return jobs
 
 
-# This dict is how main.py picks the right function for each company,
-# without a long if/elif/elif chain. "platform string from companies.py"
-# -> "the function that knows how to fetch that platform".
 def _epoch_seconds_to_iso(ts):
     """Convert Unix epoch-SECONDS to ISO. Qualcomm gives seconds, not
     milliseconds like Lever — mixing these up lands you in 1970."""
@@ -573,6 +570,47 @@ def _epoch_seconds_to_iso(ts):
         return datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat()
     except (ValueError, TypeError, OSError):
         return None
+
+
+def _merge_dedupe_by_job_id(list_of_job_lists):
+    """
+    SHARED HELPER used by both fetch_pcsx and fetch_amazon below (both
+    of them search a company's job board once PER keyword — "software",
+    "backend", "frontend", "full stack" — because a single keyword
+    risks missing real titles like "Backend Developer" that don't
+    contain the literal word "software"). This function takes all of
+    those separate keyword-search results and combines them into one
+    clean list with no duplicates.
+
+    WHY DUPLICATES HAPPEN: the SAME real job can match more than one
+    keyword search. A posting titled "Full Stack Software Engineer"
+    would show up in BOTH the "software" search results AND the "full
+    stack" search results — it's one real job, but without this step
+    it would get added to our list twice, and later scored twice too.
+
+    HOW THE DEDUPE ACTUALLY WORKS (a common Python trick worth
+    understanding): a Python dict (short for "dictionary" — a
+    collection of key -> value pairs, like a lookup table) can only
+    ever hold ONE value for a given key. If you assign to a key that
+    already exists, it just overwrites the old value — it does NOT
+    create a second entry. So here, we use each job's "job_id" as the
+    dict key: the first time we see a particular job_id we store it,
+    and if we see that exact same job_id again later (because a
+    different keyword search also matched it), we overwrite it with
+    an identical copy of itself. Either way, only one copy survives.
+    `.values()` at the end then hands back just the dict's values (the
+    job dicts themselves) as a plain list, throwing away the job_id
+    keys we only needed temporarily for the deduping.
+
+    list_of_job_lists is a list of lists, e.g.
+        [ [job, job, job], [job, job], [job] ]
+    (one inner list per keyword searched) — flattened here into one.
+    """
+    jobs_by_id = {}
+    for one_keyword_results in list_of_job_lists:
+        for job in one_keyword_results:
+            jobs_by_id[job["job_id"]] = job
+    return list(jobs_by_id.values())
 
 
 def fetch_pcsx(display_name: str, host_domain_location: str) -> list[dict]:
@@ -627,17 +665,50 @@ def fetch_pcsx(display_name: str, host_domain_location: str) -> list[dict]:
     Page size (10) is assumed from the observed responses — no explicit
     page-size param appears in either company's URL.
     """
+    # .split("|") turns "host|domain|location|queries" into a Python
+    # LIST of 4 separate strings: ["host", "domain", "location", "queries"].
+    # If the config string only has 2 parts (like Qualcomm's, which
+    # skips location/queries), this list will only have 2 items - that's
+    # why every access below past index 1 checks len(parts) first,
+    # rather than assuming all 4 pieces are always present.
     parts = host_domain_location.split("|")
     if len(parts) < 2:
         print(f"  [WARN] {display_name}: malformed pcsx identifier "
               f"'{host_domain_location}' (expected host|domain[|location[|queries]]) - skipping")
         return []
     host, domain = parts[0], parts[1]
+    # `parts[2] if len(parts) > 2 else ""` is Python's "conditional
+    # expression" (a one-line if/else): use parts[2] when it actually
+    # exists, otherwise fall back to an empty string. Same pattern is
+    # used again below for `queries`.
     location = parts[2] if len(parts) > 2 else ""
+    # `queries` ends up as a LIST of keywords to search one at a time,
+    # e.g. "software,backend,frontend" -> ["software", "backend", "frontend"].
+    # `[q.strip() for q in parts[3].split(",")]` is a "list comprehension"
+    # - a compact way to write "build a new list by doing something to
+    # every item in another list". Spelled out, it means: split the
+    # 4th config piece on commas, then for each resulting piece (q),
+    # strip off any leading/trailing spaces, and collect all of those
+    # into a new list. If there's no 4th piece at all (Qualcomm's case),
+    # we fall back to a list containing just one empty-string keyword —
+    # which means "search with no keyword filter at all", i.e. get
+    # everything, exactly like before this multi-keyword feature existed.
     queries = [q.strip() for q in parts[3].split(",")] if len(parts) > 3 and parts[3] else [""]
 
-    jobs_by_id = {}
-    for query in queries:
+    def fetch_for_one_query(query):
+        """
+        Inner function (a function defined INSIDE another function).
+        It's declared here, inside fetch_pcsx, specifically so it can
+        directly use fetch_pcsx's own local variables (host, domain,
+        location) without them having to be passed in as extra
+        arguments every time - Python lets a nested function "see"
+        everything in the function that contains it.
+
+        This does ALL the actual page-by-page fetching for exactly ONE
+        keyword search and returns that keyword's jobs as a list. It
+        gets called once per keyword in `queries` below.
+        """
+        jobs_for_this_query = []
         start = 0
         page_size = 10
 
@@ -655,22 +726,18 @@ def fetch_pcsx(display_name: str, host_domain_location: str) -> list[dict]:
                 break
 
             for p in positions:
-                job_id = str(p.get("id", ""))
                 position_url = p.get("positionUrl", "")
                 locations = p.get("locations", [])
-                # De-dupe across the multiple keyword searches above -
-                # a job matching both "backend" and "software" would
-                # otherwise get fetched (and later scored) twice.
-                jobs_by_id[job_id] = {
+                jobs_for_this_query.append({
                     "source_company": display_name,
                     "platform": "pcsx",
-                    "job_id": job_id,
+                    "job_id": str(p.get("id", "")),
                     "title": p.get("name", ""),
                     "location": ", ".join(locations) if isinstance(locations, list) else (locations or ""),
                     "url": f"https://{host}{position_url}" if position_url else "",
                     "updated_at": _epoch_seconds_to_iso(p.get("postedTs")),
                     "raw_description": p.get("department", ""),
-                }
+                })
 
             total_count = (data.get("data") or {}).get("count", 0)
             start += page_size
@@ -680,7 +747,18 @@ def fetch_pcsx(display_name: str, host_domain_location: str) -> list[dict]:
                 print(f"  [WARN] {display_name}: stopped after 2000 jobs (safety cap) for query '{query}'")
                 break
 
-    return list(jobs_by_id.values())
+        return jobs_for_this_query
+
+    # Run fetch_for_one_query once per keyword in `queries`, collecting
+    # each keyword's results into a list-of-lists, e.g.
+    #   [ [job, job], [job, job, job], [job] ]
+    # then hand that to the shared helper (defined above this function)
+    # which flattens it into one list AND removes duplicate jobs that
+    # matched more than one keyword. This is the exact same merge step
+    # fetch_amazon uses below - kept as one shared function instead of
+    # writing this de-duping logic out twice.
+    results_per_query = [fetch_for_one_query(query) for query in queries]
+    return _merge_dedupe_by_job_id(results_per_query)
 
 
 def fetch_amazon(display_name: str, country_base_query: str) -> list[dict]:
@@ -729,14 +807,31 @@ def fetch_amazon(display_name: str, country_base_query: str) -> list[dict]:
     calendar date, so treating "yesterday" as still worth fetching
     is the safe direction to round.
     """
+    # Same splitting pattern as fetch_pcsx above: "IND|software,backend"
+    # becomes parts = ["IND", "software,backend"].
     parts = country_base_query.split("|")
     country = parts[0] if len(parts) > 0 else ""
+    # Same list-comprehension pattern as fetch_pcsx's `queries` above:
+    # turn "software,backend,frontend" into ["software", "backend", "frontend"].
     base_queries = [q.strip() for q in parts[1].split(",")] if len(parts) > 1 and parts[1] else [""]
 
+    # The cutoff date used for the early-stop check below: "today minus
+    # FRESHNESS_WINDOW_DAYS days". `.date()` on the end throws away the
+    # time-of-day part, keeping just the calendar date - Amazon's
+    # posted_date field is day-only ("August 25, 2026", no time), so
+    # comparing full timestamps here would be comparing precision we
+    # don't actually have.
     cutoff_date = (datetime.now(timezone.utc) - timedelta(days=FRESHNESS_WINDOW_DAYS)).date()
 
-    jobs_by_id = {}
-    for base_query in base_queries:
+    def fetch_for_one_query(base_query):
+        """
+        Inner function (see fetch_pcsx above for what that means) that
+        does the full page-by-page fetch, INCLUDING the early-stop
+        check, for exactly ONE keyword. Called once per keyword in
+        base_queries below. Directly uses this outer function's
+        `country` and `cutoff_date` without needing them passed in.
+        """
+        jobs_for_this_query = []
         offset = 0
         page_size = 100
 
@@ -754,20 +849,33 @@ def fetch_amazon(display_name: str, country_base_query: str) -> list[dict]:
             if not job_list:
                 break
 
+            # We only want to keep paging (fetching the NEXT page) if
+            # this page still has at least one job recent enough to
+            # matter. Starts False; flipped True below the moment we
+            # find one such job anywhere on this page.
             page_has_recent_job = False
             for j in job_list:
                 job_id = str(j.get("id_icims", ""))
                 job_path = j.get("job_path", "")
                 posted_date = j.get("posted_date")  # human string e.g. "April 9, 2026", not ISO
+
+                # Turn Amazon's "August 25, 2026" text into an actual
+                # Python date we can compare against cutoff_date.
+                # strptime = "STRing Parse TIME": %B is the full month
+                # name, %d the day number, %Y the 4-digit year - those
+                # three codes together match Amazon's exact format.
+                # Wrapped in try/except because a date we can't parse
+                # shouldn't crash the whole fetch - we just treat it as
+                # "unknown" (job_date = None) and move on.
                 try:
                     job_date = datetime.strptime(posted_date, "%B %d, %Y").date() if posted_date else None
                 except ValueError:
                     job_date = None  # unparseable - don't let it affect the stop decision either way
+
                 if job_date is None or job_date >= cutoff_date:
                     page_has_recent_job = True
 
-                # De-dupe across the multiple keyword searches above.
-                jobs_by_id[job_id] = {
+                jobs_for_this_query.append({
                     "source_company": display_name,
                     "platform": "amazon",
                     "job_id": job_id,
@@ -776,7 +884,7 @@ def fetch_amazon(display_name: str, country_base_query: str) -> list[dict]:
                     "url": f"https://www.amazon.jobs{job_path}" if job_path else "",
                     "updated_at": posted_date,
                     "raw_description": j.get("description_short") or j.get("description", ""),
-                }
+                })
 
             if not page_has_recent_job:
                 break  # EARLY STOP: rest of this keyword's results are even older
@@ -788,7 +896,13 @@ def fetch_amazon(display_name: str, country_base_query: str) -> list[dict]:
                 print(f"  [WARN] {display_name}: stopped after 5000 jobs (safety cap) for query '{base_query}'")
                 break
 
-    return list(jobs_by_id.values())
+        return jobs_for_this_query
+
+    # Same pattern as fetch_pcsx above: fetch once per keyword, then
+    # flatten + de-dupe using the shared helper defined earlier in this
+    # file, so a job matching two different keywords is only counted once.
+    results_per_query = [fetch_for_one_query(base_query) for base_query in base_queries]
+    return _merge_dedupe_by_job_id(results_per_query)
 
 
 _NEXT_BUILD_ID_RE = re.compile(r'"buildId":"([^"]+)"')
