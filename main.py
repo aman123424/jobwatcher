@@ -35,11 +35,12 @@ cron, a scheduled cloud function, or similar.
 
 import csv
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 from companies import TIER1_COMPANIES, TIER2_COMPANIES, CUSTOM_COMPANIES
 from fetchers import FETCHERS
-from scoring import score_job, is_relevant_title
+from scoring import score_job, is_relevant_title, is_india_location
 from state import load_seen, save_seen, split_new_jobs
 
 # main.py doesn't need to know or care which tier a company belongs
@@ -54,24 +55,78 @@ MIN_SCORE = 50  #only notify for score >= 50/100.
 
 LOG_FILE = os.path.join(os.path.dirname(__file__), "matches_log.csv")
 
+# How many companies to fetch AT THE SAME TIME (added 2026-08-27 -
+# see fetch_all_jobs()'s docstring for the full "why" of this change).
+# 42 companies one-at-a-time (the original design) took 3-4 minutes,
+# almost entirely spent WAITING on network responses rather than doing
+# real work - exactly the situation where running several at once pays
+# off. Kept well below 42 (i.e. NOT "just fetch every company at
+# once") on purpose: too much concurrency risks looking like an attack
+# to any one company's server if several of ITS requests happened to
+# land in the same instant (Workday's pagination already fires many
+# sequential requests per company - see fetch_workday - so the
+# per-company request rate is unchanged by this setting; this only
+# controls how many DIFFERENT companies run at once).
+MAX_CONCURRENT_FETCHES = 10
+
 
 def fetch_all_jobs() -> list[dict]:
     """
-    Loop over every company in companies.py, call its matching
-    fetcher, and collect everything into one flat list.
+    Fetch every company in companies.py and collect everything into
+    one flat list — but, as of 2026-08-27, up to MAX_CONCURRENT_FETCHES
+    companies AT THE SAME TIME instead of one after another.
 
-    Each company is wrapped in its own try/except so that one
-    company's API being temporarily down doesn't stop us from
-    checking the other 21. This is the same "isolate failures"
-    principle fetchers.py uses internally, applied one level up.
+    IF YOU'RE NEW TO PYTHON, READ THIS FIRST — WHY THIS WORKS AND WHAT
+    "CONCURRENT" MEANS HERE: fetching a company's jobs is almost all
+    WAITING - our code sends a request, then does nothing until that
+    company's server responds, which can take a second or more. Doing
+    that one company at a time (the original design) means the
+    program sits idle waiting on Company A before it even STARTS
+    talking to Company B, even though Company B's server has nothing
+    to do with Company A's and could have been contacted at the exact
+    same moment. `concurrent.futures.ThreadPoolExecutor` (from
+    Python's own standard library, no extra install needed) hands out
+    a small pool of THREADS - independent, simultaneously-running
+    "tracks" of the same program - so several companies' waiting
+    happens at the same time instead of one after another. This is
+    "concurrency," specifically the multi-THREADED kind: still one
+    Python program, just multiple tracks of it in flight together.
+    (This is safe here specifically because the shared SESSION object
+    every fetch_* function uses - see fetchers.py - comes from the
+    `requests` library, which documents its Session as safe to use
+    from multiple threads at once.)
+
+    HOW THE CODE BELOW ACTUALLY DOES THAT:
+      - `executor.submit(fn, arg)` hands one function call off to the
+        thread pool and immediately returns a "Future" - a placeholder
+        object standing in for "the result of this call, once it's
+        done" - without waiting for it to finish. Calling submit() in
+        a loop, once per company, is what gets ALL of them started
+        (up to MAX_CONCURRENT_FETCHES at once; the rest queue and start
+        as earlier ones finish) rather than starting the next one only
+        after the previous one completes.
+      - `as_completed(futures)` then hands back each Future the MOMENT
+        it finishes - in whatever order that happens to be, not
+        necessarily the order they were submitted in. That's why the
+        per-company progress lines below can print in a different
+        order across different runs - expected, not a bug.
+      - `future.result()` gets the actual return value (or re-raises
+        the exception) from that one company's fetch, once it's done.
+
+    Each company is still wrapped in its own try/except (moved into
+    the small _fetch_one_company() helper below so it runs inside each
+    thread), so one company's API being temporarily down doesn't stop
+    the others from being checked - the same "isolate failures"
+    principle fetchers.py itself uses internally, applied one level up,
+    unchanged from before this concurrency change.
     """
-    all_jobs = []
-    for display_name, platform, slug in ALL_COMPANIES:
+    def fetch_one_company(company: tuple) -> list[dict]:
+        display_name, platform, slug = company
         fetch_fn = FETCHERS[platform]  # look up the right function for this platform
         try:
             jobs = fetch_fn(display_name, slug)
             print(f"  {display_name:20s} ({platform:16s}): {len(jobs)} open jobs")
-            all_jobs.extend(jobs)
+            return jobs
         except Exception as e:
             # A genuinely UNEXPECTED error (not the "API returned an
             # error" case, which fetch_* functions already handle
@@ -79,6 +134,18 @@ def fetch_all_jobs() -> list[dict]:
             # parsing code hitting a response shape we didn't expect.
             # We still don't want this to kill the whole run.
             print(f"  {display_name:20s} ({platform:16s}): FAILED - {e}")
+            return []
+
+    all_jobs = []
+    # `with ... as executor:` creates the thread pool and guarantees
+    # it's properly shut down afterward (even if something inside
+    # raises an exception) - the same "with" pattern used everywhere
+    # else in this codebase for opening files (see state.py, main.py's
+    # own append_to_log() below).
+    with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_FETCHES) as executor:
+        futures = [executor.submit(fetch_one_company, company) for company in ALL_COMPANIES]
+        for future in as_completed(futures):
+            all_jobs.extend(future.result())
     return all_jobs
 
 
@@ -108,42 +175,142 @@ def append_to_log(new_matches: list[dict]) -> None:
             ])
 
 
-def run() -> None:
-    print(f"=== jobwatch run started {datetime.now(timezone.utc).isoformat()} ===")
+def fetch_and_score_all() -> dict:
+    """
+    Runs the READ-ONLY half of the pipeline: fetch every company's
+    current jobs, keep only Software-Engineer-shaped titles, and score
+    every one of those against Aman's resume. Nothing here touches
+    seen_jobs.json or matches_log.csv, and nothing here filters by
+    score — every relevant job is included, however low it scores.
 
-    print(f"\nFetching current open jobs from {len(ALL_COMPANIES)} companies "
-          f"({len(TIER1_COMPANIES)} Tier 1 + {len(TIER2_COMPANIES)} Tier 2 "
-          f"+ {len(CUSTOM_COMPANIES)} custom)...")
+    WHY THIS IS SEPARATE FROM find_new_matches() BELOW: this is the
+    shared "what's open and relevant right now" step that THREE
+    different callers all need but each do something different with:
+      - api.py's GET /jobs returns every job this function finds.
+      - api.py's GET /jobs/best_match filters this down to score >= MIN_SCORE.
+      - find_new_matches() below ALSO starts from this exact same
+        list, then goes further — filtering by score AND comparing
+        against past runs AND writing to disk — for GET /jobs/new and
+        the command-line tool.
+    Splitting it out here means all three share one implementation of
+    "how do we fetch and score everything," instead of three separate
+    copies of that logic that could quietly drift apart over time.
+
+    Returns:
+        {
+            "all_jobs_count": 5867,      # every job fetched, before any filtering
+            "relevant_jobs": [ ...job dicts, highest score first, EVERY
+                                score included, not just qualifying ones... ],
+        }
+    """
     all_jobs = fetch_all_jobs()
-    print(f"\nTotal open jobs fetched across all companies: {len(all_jobs)}")
-
-    relevant_jobs = [j for j in all_jobs if is_relevant_title(j["title"])]
-    print(f"Relevant (Software-Engineer-shaped titles): {len(relevant_jobs)}")
-
+    # Two independent filters, both applied before scoring: title has
+    # to look like a Software Engineer role, AND location has to look
+    # India-based (added 2026-08-28 - Aman only wants India postings;
+    # see is_india_location()'s docstring in scoring.py for exactly how
+    # that's detected and its known limits). Order doesn't matter here
+    # since both are just text checks on fields already on the job dict.
+    relevant_jobs = [
+        j for j in all_jobs
+        if is_relevant_title(j["title"]) and is_india_location(j["location"])
+    ]
     scored_jobs = [score_job(j) for j in relevant_jobs]
-    qualifying_jobs = [j for j in scored_jobs if j["match_score"] >= MIN_SCORE]
-    print(f"Score >= {MIN_SCORE}: {len(qualifying_jobs)}")
+    # Highest score first, so the strongest fits are the first thing
+    # any caller (terminal output OR an API's JSON response) sees,
+    # not buried at the bottom of the list.
+    scored_jobs = sorted(scored_jobs, key=lambda j: -j["match_score"])
+
+    return {
+        "all_jobs_count": len(all_jobs),
+        "relevant_jobs": scored_jobs,
+    }
+
+
+def find_new_matches() -> dict:
+    """
+    Builds on fetch_and_score_all() above to run the FULL, STATEFUL
+    pipeline exactly once: on top of the read-only fetch+score step,
+    this keeps only jobs scoring >= MIN_SCORE, compares that against
+    what state.py already knows from past runs, logs any brand-new
+    matches to matches_log.csv, and saves the updated "seen" set back
+    to disk.
+
+    WHY THIS FUNCTION EXISTS SEPARATELY FROM run() BELOW: this is the
+    ONE place this particular (stateful, "what's NEW since last time")
+    pipeline logic lives. run() (the command-line tool) calls this and
+    prints a human-readable report from what it returns. api.py's GET
+    /jobs/new endpoint calls this SAME function and turns what it
+    returns into a JSON response instead. Neither of those two callers
+    re-implements any of the filter/diff/save logic themselves — a
+    future bug fix or behavior change here automatically applies to
+    both the CLI and the API, instead of risking the two slowly
+    drifting out of sync with each other.
+
+    Returns a dict (Python's key -> value lookup type) with everything
+    a caller might want to report, keyed by name rather than being a
+    bare list, so each caller can pull out just what it needs:
+        {
+            "all_jobs_count": 5867,          # every job fetched, before any filtering
+            "relevant_jobs_count": 714,      # after the Software-Engineer title filter
+            "qualifying_jobs_count": 8,      # after the match_score >= MIN_SCORE filter
+            "new_matches": [ ...job dicts, highest score first... ],
+            "total_seen_count": 1042,        # size of the updated seen-jobs set
+        }
+    """
+    fetch_results = fetch_and_score_all()
+    relevant_jobs = fetch_results["relevant_jobs"]
+    qualifying_jobs = [j for j in relevant_jobs if j["match_score"] >= MIN_SCORE]
 
     seen_keys = load_seen()
     new_matches, updated_seen = split_new_jobs(qualifying_jobs, seen_keys)
-    print(f"Of those, NEW since last run: {len(new_matches)}")
+    # split_new_jobs() doesn't promise any particular order back, so
+    # re-sort highest-score-first here too, same reasoning as above.
+    new_matches = sorted(new_matches, key=lambda j: -j["match_score"])
 
     if new_matches:
+        append_to_log(new_matches)
+    save_seen(updated_seen)
+
+    return {
+        "all_jobs_count": fetch_results["all_jobs_count"],
+        "relevant_jobs_count": len(relevant_jobs),
+        "qualifying_jobs_count": len(qualifying_jobs),
+        "new_matches": new_matches,
+        "total_seen_count": len(updated_seen),
+    }
+
+
+def run() -> None:
+    """
+    The command-line entry point - `python main.py` calls this. All of
+    the actual work happens inside find_new_matches() above; this
+    function's only job is turning that result into readable terminal
+    output (progress lines, a NEW MATCHES section, a final summary).
+    """
+    print(f"=== jobwatch run started {datetime.now(timezone.utc).isoformat()} ===")
+    print(f"\nFetching current open jobs from {len(ALL_COMPANIES)} companies "
+          f"({len(TIER1_COMPANIES)} Tier 1 + {len(TIER2_COMPANIES)} Tier 2 "
+          f"+ {len(CUSTOM_COMPANIES)} custom)...")
+
+    results = find_new_matches()
+
+    print(f"\nTotal open jobs fetched across all companies: {results['all_jobs_count']}")
+    print(f"Relevant (Software-Engineer-shaped titles): {results['relevant_jobs_count']}")
+    print(f"Score >= {MIN_SCORE}: {results['qualifying_jobs_count']}")
+    print(f"Of those, NEW since last run: {len(results['new_matches'])}")
+
+    if results["new_matches"]:
         print(f"\n{'='*70}\nNEW MATCHES\n{'='*70}")
-        # Highest score first, so the strongest fits are the first
-        # thing I see, not buried at the bottom of the list.
-        for job in sorted(new_matches, key=lambda j: -j["match_score"]):
+        for job in results["new_matches"]:
             print(f"\n[{job['match_score']}/100] {job['title']} — {job['source_company']}")
             print(f"  Location: {job['location']}  |  Seniority: {job['seniority']}")
             print(f"  {job['match_reason']}")
             print(f"  {job['url']}")
-        append_to_log(new_matches)
         print(f"\n(Appended to {LOG_FILE})")
     else:
         print("\nNo new qualifying matches this run.")
 
-    save_seen(updated_seen)
-    print(f"\n=== run complete. {len(updated_seen)} total jobs now tracked as 'seen'. ===")
+    print(f"\n=== run complete. {results['total_seen_count']} total jobs now tracked as 'seen'. ===")
 
 
 if __name__ == "__main__":

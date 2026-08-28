@@ -46,6 +46,17 @@ import re
 import requests
 from datetime import datetime, timedelta, timezone
 
+# Reused here (rather than writing a second copy of the same keyword
+# list) to pre-filter WHICH jobs are worth an extra per-job detail
+# request in fetch_workday/fetch_smartrecruiters below, before main.py
+# ever applies this same filter to the final results - see each of
+# those functions' "EARLY STOP ON STALENESS"-style comments for why
+# this pre-filtering matters. Safe to import: scoring.py only imports
+# the standard `re` module, so there's no risk of a circular import
+# (fetchers.py importing scoring.py, which tries to import fetchers.py
+# back, which Python can't resolve).
+from scoring import is_relevant_title
+
 # A single shared "session" object, reused across all requests.
 # WHY: each request through a session can reuse the same underlying
 # TCP connection (via HTTP keep-alive) instead of opening a fresh one
@@ -109,6 +120,27 @@ def _safe_get_text(url, **kwargs):
         return None
 
 
+# Some companies run a custom career-site FRONTEND that pulls its data
+# from Greenhouse's API but does its OWN internal ID assignment for
+# each posting - meaning Greenhouse's own "absolute_url" field points
+# to a URL using GREENHOUSE's job id, which that company's frontend
+# doesn't actually recognize (it silently falls back to a generic
+# listing page instead of the specific job). Confirmed live 2026-08-28
+# for SquarePoint specifically: their site's own internal job IDs (read
+# straight off their real "Apply" links, e.g. .../opportunity-details
+# ?id=6040910) share NO overlap at all with Greenhouse's ids for the
+# same postings, and there's no plain HTTP-fetchable API to resolve one
+# to the other - the mapping only exists inside their client-side JS,
+# which would need a full browser render (not practical to do on every
+# fetch) to resolve. Rather than link to a URL that LOOKS specific but
+# silently lands on the wrong page, these slugs fall back to the real,
+# working listing page - honest about not being able to deep-link,
+# instead of confidently wrong.
+_BROKEN_ABSOLUTE_URL_FALLBACKS = {
+    "squarepointcapital": "https://www.squarepoint-capital.com/open-opportunities",
+}
+
+
 def fetch_greenhouse(display_name: str, slug: str) -> list[dict]:
     """
     Greenhouse's public Job Board API.
@@ -126,6 +158,10 @@ def fetch_greenhouse(display_name: str, slug: str) -> list[dict]:
     if not data:
         return []
 
+    # See _BROKEN_ABSOLUTE_URL_FALLBACKS above - None for every slug
+    # except the handful confirmed to need this workaround.
+    url_fallback = _BROKEN_ABSOLUTE_URL_FALLBACKS.get(slug)
+
     jobs = []
     # Greenhouse's response shape is: {"jobs": [ {...}, {...} ], "meta": {...}}
     for j in data.get("jobs", []):
@@ -136,7 +172,7 @@ def fetch_greenhouse(display_name: str, slug: str) -> list[dict]:
             "title": j.get("title", ""),
             # location is a nested object: {"name": "Bengaluru, India"}
             "location": (j.get("location") or {}).get("name", ""),
-            "url": j.get("absolute_url", ""),
+            "url": url_fallback or j.get("absolute_url", ""),
             "updated_at": j.get("updated_at"),  # already ISO 8601
             "raw_description": j.get("content", ""),  # HTML, stripped later
         })
@@ -297,13 +333,22 @@ def fetch_smartrecruiters(display_name: str, company_id: str) -> list[dict]:
        response for company-sized job boards, so we didn't need this
        there — but it's not safe to assume every API works that way.
 
-    2. NO FULL DESCRIPTION IN THE LIST ENDPOINT. This "postings" list
-       call only gives summary fields, not the full job description.
-       Getting the full text would mean one extra API call PER JOB
-       (a "detail" endpoint), which is a lot of extra requests for
-       marginal benefit here — so for now we score SmartRecruiters
-       jobs on title + department/function only, and note that as a
-       known limitation (see scoring.py).
+    2. NO FULL DESCRIPTION IN THE LIST ENDPOINT - FIXED 2026-08-28.
+       This "postings" list call only ever gave summary fields, not
+       the full job description - getting that needs one extra API
+       call PER JOB (a "detail" endpoint), confirmed live to exist at
+       GET /v1/companies/{company_id}/postings/{posting_id} and to
+       return real, substantial description text split into sections
+       (jobAd.sections.jobDescription, .qualifications, etc). Doing
+       that for EVERY posting would be a lot of extra requests for
+       postings that were always going to get thrown away anyway (a
+       Sales or HR posting matched under "software" precisely zero
+       times) - so this only enriches postings whose TITLE already
+       looks relevant (is_relevant_title(), imported from scoring.py -
+       the exact same filter main.py applies to every other platform's
+       results too, not a second copy of that list) AND that already
+       survived the freshness early-stop below. See
+       _enrich_smartrecruiters_descriptions() for the actual fetch.
 
     3. EARLY-STOP ON STALENESS. Confirmed live on 2026-08-26: results
        come back sorted by releasedDate, newest first (unlike
@@ -367,15 +412,37 @@ def fetch_smartrecruiters(display_name: str, company_id: str) -> list[dict]:
                     job_dt = datetime.fromisoformat(released_date.replace("Z", "+00:00"))
                 except ValueError:
                     pass  # unparseable date - don't let it affect the stop decision either way
-            if job_dt is None or job_dt >= cutoff:
+            is_recent = job_dt is None or job_dt >= cutoff
+            if is_recent:
                 page_has_recent_job = True
+            else:
+                # BUG FIXED 2026-08-28: this used to append EVERY job on
+                # the page regardless of is_recent, and only checked
+                # page_has_recent_job AFTER the whole page was already
+                # added - so the one page where freshness runs out mid-
+                # page (or a page that's entirely stale but still gets
+                # fetched because the PREVIOUS page had one recent job on
+                # it) got included in full. Confirmed live: this let jobs
+                # up to 258 hours (10.8 days) old through on a real
+                # ServiceNow run, despite FRESHNESS_WINDOW_DAYS being 2.
+                # Skipping stale jobs individually, right here, means a
+                # page that's part-recent/part-stale only contributes its
+                # genuinely recent jobs, not the whole page.
+                continue
 
+            # "fullLocation" (e.g. "Hyderabad, , India") rather than
+            # just "city" (e.g. "Hyderabad" alone) - confirmed live
+            # 2026-08-28 this is what the API actually gives, and using
+            # only "city" was silently throwing the country away, which
+            # is exactly what main.py's India-only location filter (see
+            # scoring.py's is_india_location()) needs to see to work.
+            location = (j.get("location") or {})
             jobs.append({
                 "source_company": display_name,
                 "platform": "smartrecruiters",
                 "job_id": job_id,
                 "title": j.get("name", ""),
-                "location": (j.get("location") or {}).get("city", ""),
+                "location": location.get("fullLocation") or location.get("city", ""),
                 "url": url,
                 "updated_at": released_date,
                 "raw_description": (j.get("function") or {}).get("label", ""),
@@ -392,7 +459,48 @@ def fetch_smartrecruiters(display_name: str, company_id: str) -> list[dict]:
         if offset >= data.get("totalFound", 0):
             break  # we've now fetched every page
 
+    _enrich_smartrecruiters_descriptions(jobs, company_id)
     return jobs
+
+
+def _enrich_smartrecruiters_descriptions(jobs: list[dict], company_id: str) -> None:
+    """
+    Same idea as _enrich_pcsx_descriptions() above (see that function's
+    docstring for the full explanation of the "in place" mutation and
+    why this runs SEQUENTIALLY, one request at a time, rather than
+    concurrently - the exact same rate-limiting lesson learned live on
+    Qualcomm applies here too), with one extra step first: only jobs
+    whose TITLE already looks like a real Software Engineer role
+    (is_relevant_title()) get a detail request at all. Everything else
+    in `jobs` (Sales, HR, warehouse roles that happened to survive the
+    freshness filter) is left exactly as it was - there's no point
+    spending a request finding out a Sales posting's real description
+    doesn't mention C#, when its TITLE already told us that.
+
+    Combines THREE of the four sections SmartRecruiters gives per job
+    into the new raw_description: jobDescription, qualifications (the
+    section most likely to carry real "Required"/"Preferred" structure
+    for scoring.py's JD-importance detection to find), and
+    additionalInformation. companyDescription is the one deliberately
+    left out (Aman's own call, 2026-08-28) - it's boilerplate about the
+    COMPANY, not the job, and would only dilute keyword matching with
+    irrelevant text.
+    """
+    for job in jobs:
+        if not is_relevant_title(job["title"]):
+            continue
+        data = _safe_get(f"https://api.smartrecruiters.com/v1/companies/{company_id}/postings/{job['job_id']}")
+        if not data or not isinstance(data, dict):
+            continue
+        sections = ((data.get("jobAd") or {}).get("sections")) or {}
+        parts = [
+            (sections.get("jobDescription") or {}).get("text", ""),
+            (sections.get("qualifications") or {}).get("text", ""),
+            (sections.get("additionalInformation") or {}).get("text", ""),
+        ]
+        combined = " ".join(part for part in parts if part)
+        if combined:
+            job["raw_description"] = combined
 
 
 def fetch_workday(display_name: str, tenant_wd_site: str) -> list[dict]:
@@ -435,10 +543,16 @@ def fetch_workday(display_name: str, tenant_wd_site: str) -> list[dict]:
          us. We store it as-is in updated_at — it's still useful to a
          human reading matches_log.csv, just not precise to the
          minute the way Tier 1 is.
-      2. NO FULL DESCRIPTION IN THIS RESPONSE. Same tradeoff as
-         SmartRecruiters (see that function's docstring) — getting
-         the full text needs one extra request PER JOB, which we're
-         not doing here. Workday jobs get scored on title text only.
+      2. NO FULL DESCRIPTION IN THIS RESPONSE - FIXED 2026-08-28. Same
+         tradeoff SmartRecruiters had (see that function's docstring)
+         and the same fix: a real per-job detail endpoint exists
+         (confirmed live at GET {this same tenant/wdN/site base}
+         /job{externalPath} - literally the list endpoint's own URL
+         with "/jobs" swapped for "/job{externalPath}"), returning
+         jobPostingInfo.jobDescription with real, substantial text
+         (7,878 chars confirmed on a real Visa posting). Same
+         "only enrich jobs whose title already looks relevant" filter
+         as SmartRecruiters too - see _enrich_workday_descriptions().
       3. SOME WORKDAY TENANTS HAVE BOT PROTECTION. A 403 here doesn't
          necessarily mean the identifier is wrong — some companies
          put Cloudflare or similar in front of their Workday site.
@@ -516,8 +630,20 @@ def fetch_workday(display_name: str, tenant_wd_site: str) -> list[dict]:
             # days_old is None for an unrecognized label (Workday adds
             # new phrasing occasionally) - treat "can't tell" as recent
             # so we never stop early on a guess.
-            if days_old is None or days_old < FRESHNESS_WINDOW_DAYS:
+            is_recent = days_old is None or days_old < FRESHNESS_WINDOW_DAYS
+            if is_recent:
                 page_has_recent_job = True
+            else:
+                # BUG FIXED 2026-08-28: same fix as fetch_smartrecruiters
+                # above - this used to append every posting on the page
+                # regardless of is_recent, only checking page_has_recent_job
+                # AFTER the whole page was already added. That let an
+                # entire page of stale postings through whenever an
+                # earlier page still had at least one recent one on it.
+                # Skipping stale postings individually, right here, means
+                # a part-recent/part-stale page only contributes its
+                # genuinely recent postings.
+                continue
 
             jobs.append({
                 "source_company": display_name,
@@ -558,7 +684,42 @@ def fetch_workday(display_name: str, tenant_wd_site: str) -> list[dict]:
             print(f"  [WARN] {display_name}: stopped after 2000 jobs (safety cap)")
             break
 
+    _enrich_workday_descriptions(jobs, tenant, wd_num, site)
     return jobs
+
+
+def _enrich_workday_descriptions(jobs: list[dict], tenant: str, wd_num: str, site: str) -> None:
+    """
+    Same idea, same "in place" mutation, and same SEQUENTIAL-not-
+    concurrent reasoning as _enrich_pcsx_descriptions() and
+    _enrich_smartrecruiters_descriptions() above - only enrich jobs
+    whose title already looks like a real Software Engineer role
+    (is_relevant_title()), one request at a time.
+
+    Workday's detail endpoint is the exact same cxs base URL the list
+    endpoint uses, just with the job's own externalPath appended
+    instead of "/jobs" - e.g. list is .../wday/cxs/visa/visa/jobs,
+    detail for one posting is .../wday/cxs/visa/visa/job/US---New-
+    York-NY/Some-Job-Title_REF12345. Confirmed live: a plain GET (not
+    the list endpoint's POST), returning jobPostingInfo.jobDescription
+    as real HTML text.
+
+    NOTE ON external_path: it already comes back from Workday starting
+    with "/job/..." (see fetch_workday above), so it's appended
+    directly here with NO extra "/job" in between - a first version of
+    this added one anyway, building a broken ".../job/job/..." URL that
+    404's/422's on every single request. Confirmed live this fixed it.
+    """
+    for job in jobs:
+        if not is_relevant_title(job["title"]):
+            continue
+        external_path = job["job_id"]  # see fetch_workday above - externalPath IS the job_id here, and already starts with "/job/..."
+        data = _safe_get(f"https://{tenant}.{wd_num}.myworkdayjobs.com/wday/cxs/{tenant}/{site}{external_path}")
+        if not data or not isinstance(data, dict):
+            continue
+        description = (data.get("jobPostingInfo") or {}).get("jobDescription", "")
+        if description:
+            job["raw_description"] = description
 
 
 def _epoch_seconds_to_iso(ts):
@@ -758,7 +919,73 @@ def fetch_pcsx(display_name: str, host_domain_location: str) -> list[dict]:
     # fetch_amazon uses below - kept as one shared function instead of
     # writing this de-duping logic out twice.
     results_per_query = [fetch_for_one_query(query) for query in queries]
-    return _merge_dedupe_by_job_id(results_per_query)
+    jobs = _merge_dedupe_by_job_id(results_per_query)
+
+    # FIX (2026-08-27): the search results above only ever give
+    # p.get("department") as raw_description - a one- or two-word
+    # DEPARTMENT NAME like "Software Engineering", never the job's
+    # actual description text. scoring.py scores a job by looking for
+    # resume-skill keywords (C#, React, SQL, ...) in title+description,
+    # so a real, strong-fit job with a department-only description
+    # scores close to 0 and silently disappears from /jobs/best_match
+    # - this is exactly what happened with a real Microsoft posting
+    # Aman found manually and confirmed was missing from that endpoint,
+    # even though it WAS being fetched correctly (verified live: it
+    # was in these search results all along - it just had nothing real
+    # to score against). Fixed by fetching each job's real description
+    # from pcsx's separate "position_details" endpoint (confirmed live
+    # to return a full HTML job description, not just a department
+    # name) and overwriting raw_description with that before returning.
+    _enrich_pcsx_descriptions(jobs, host, domain)
+    return jobs
+
+
+def _enrich_pcsx_descriptions(jobs: list[dict], host: str, domain: str) -> None:
+    """
+    Fetches the REAL job description for every job in `jobs` (a list
+    of the normalized job dicts fetch_pcsx builds above) from pcsx's
+    position_details endpoint, and overwrites each one's
+    raw_description in place with it.
+
+    "in place" is the important part here: this function doesn't
+    return a new list - it directly modifies the dicts that are
+    already sitting inside the `jobs` list fetch_pcsx passed in, the
+    same way editing a spreadsheet cell doesn't require making a new
+    spreadsheet. That's why fetch_pcsx above doesn't need to do
+    anything with this function's return value (there isn't one, by
+    design - see the `-> None` in the signature).
+
+    DELIBERATELY SEQUENTIAL (ONE REQUEST AT A TIME), NOT CONCURRENT -
+    this is the opposite choice from main.py's fetch_all_jobs(), and
+    on purpose: that function's concurrency spreads its requests across
+    MANY DIFFERENT companies' servers at once, which is exactly what
+    concurrency is good for. This function instead sends every one of
+    its requests to the SAME company's server, in a tight burst - a
+    first version of this ran those concurrently too (first at 10 at
+    once, then 4) and BOTH got real 429 "too many requests" errors back
+    from Qualcomm's own site on live runs on 2026-08-27, because a
+    burst of near-simultaneous requests to one server looks very
+    different to that server than the same total number of requests
+    spread across ten unrelated ones. Plain one-at-a-time is the fix -
+    slower for a company with hundreds of relevant jobs, but it
+    actually finishes with real descriptions instead of a pile of
+    failed look-ups that undo this whole fix's purpose.
+
+    A description look-up failing for one job (network hiccup, a job
+    that got closed between the search call and this one, etc.) just
+    leaves that one job's raw_description as whatever the search
+    results already gave it (the department name) rather than failing
+    the whole company's fetch - same "isolate failures" principle used
+    everywhere else in this file.
+    """
+    for job in jobs:
+        data = _safe_get(
+            f"https://{host}/api/pcsx/position_details"
+            f"?position_id={job['job_id']}&domain={domain}&hl=en"
+        )
+        description = (data.get("data") or {}).get("jobDescription") if isinstance(data, dict) else None
+        if description:
+            job["raw_description"] = description
 
 
 def fetch_amazon(display_name: str, country_base_query: str) -> list[dict]:

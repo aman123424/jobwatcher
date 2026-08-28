@@ -101,7 +101,8 @@ TIER1_COMPANIES = [
     ("CRED",         "lever",          "cred"),
     ("Snowflake",    "ashby",          "snowflake"),
     ("Navi",         "ashby",          "navi"),
-    ("ServiceNow",   "smartrecruiters","ServiceNow"),  # FIXED: was "ServiceNow" (wrong case)
+    ("ServiceNow",   "smartrecruiters","ServiceNow"),
+    ("Ixigo",        "smartrecruiters", "ixigo")
 ]
 
 # tenant_wd_site format: "tenant|wdN|site" - see fetch_workday()'s
