@@ -56,6 +56,7 @@ from datetime import datetime, timedelta, timezone
 # (fetchers.py importing scoring.py, which tries to import fetchers.py
 # back, which Python can't resolve).
 from scoring import is_relevant_title
+from job_dates import workday_posted_on_days
 
 # A single shared "session" object, reused across all requests.
 # WHY: each request through a session can reuse the same underlying
@@ -276,33 +277,6 @@ def fetch_ashby(display_name: str, slug: str) -> list[dict]:
 # the label was generated, so treating "yesterday" as still worth
 # fetching is the safe direction to round.
 FRESHNESS_WINDOW_DAYS = 2
-
-_WORKDAY_POSTED_ON_RE = re.compile(r"posted\s+(today|yesterday|(\d+)\+?\s+days?\s+ago)", re.IGNORECASE)
-
-
-def _workday_posted_on_days(posted_on: str):
-    """
-    Parse Workday's relative "postedOn" label into an integer day
-    count — "Posted Today" -> 0, "Posted Yesterday" -> 1, "Posted 5
-    Days Ago" -> 5, "Posted 30+ Days Ago" -> 30. Confirmed live against
-    real labels from Visa and Barclays on 2026-08-26 (including the
-    "30+" form, which needed the trailing "+" handled explicitly).
-
-    Returns None for anything that doesn't match — callers should
-    treat that as "can't tell, don't use it to stop early" rather than
-    assuming it means "old" or "new".
-    """
-    if not posted_on:
-        return None
-    m = _WORKDAY_POSTED_ON_RE.search(posted_on)
-    if not m:
-        return None
-    word = m.group(1).lower()
-    if word == "today":
-        return 0
-    if word == "yesterday":
-        return 1
-    return int(m.group(2))
 
 
 def fetch_smartrecruiters(display_name: str, company_id: str) -> list[dict]:
@@ -626,7 +600,7 @@ def fetch_workday(display_name: str, tenant_wd_site: str) -> list[dict]:
         for j in postings:
             external_path = j.get("externalPath", "")
             posted_on = j.get("postedOn")
-            days_old = _workday_posted_on_days(posted_on)
+            days_old = workday_posted_on_days(posted_on)
             # days_old is None for an unrecognized label (Workday adds
             # new phrasing occasionally) - treat "can't tell" as recent
             # so we never stop early on a guess.
@@ -920,6 +894,44 @@ def fetch_pcsx(display_name: str, host_domain_location: str) -> list[dict]:
     # writing this de-duping logic out twice.
     results_per_query = [fetch_for_one_query(query) for query in queries]
     jobs = _merge_dedupe_by_job_id(results_per_query)
+
+    # FIX (2026-08-28): pcsx has NO reliable date sort (see this
+    # function's docstring above - `sort_by` was tested live and does
+    # nothing), so it never got the same early-stop-while-paginating
+    # freshness trick fetch_workday/fetch_smartrecruiters use. That
+    # meant EVERY relevant-titled job was getting the expensive,
+    # deliberately-sequential per-job description enrichment below -
+    # confirmed live on 2026-08-28: of 558 total India postings on
+    # Qualcomm, only 14 were actually within the 2-day freshness
+    # window; the other 544 ranged up to 409 DAYS old. Enriching all
+    # ~550 sequentially (required to avoid the rate-limit errors
+    # documented in _enrich_pcsx_descriptions' own docstring) is what
+    # made a Qualcomm fetch take ~7 minutes on its own.
+    #
+    # Early-stop DURING pagination still isn't safe here (still no
+    # reliable sort), but filtering the COMPLETE, already-fetched list
+    # by each job's own postedTs (already parsed into updated_at above,
+    # no extra request needed) doesn't need reliable ordering - it's
+    # correct regardless of what order the postings came back in. This
+    # is a plain post-fetch filter, not the page-by-page early-stop
+    # fetch_workday/fetch_smartrecruiters use, but achieves the same
+    # goal: don't pay for enriching (or scoring) a posting that's been
+    # open for over a year.
+    cutoff = datetime.now(timezone.utc) - timedelta(days=FRESHNESS_WINDOW_DAYS)
+
+    def is_recent(job):
+        if not job["updated_at"]:
+            return True  # can't tell - treat as recent rather than silently dropping it
+        try:
+            return datetime.fromisoformat(job["updated_at"]) >= cutoff
+        except ValueError:
+            return True  # unparseable - same reasoning as above
+
+    stale_count = sum(1 for j in jobs if not is_recent(j))
+    jobs = [j for j in jobs if is_recent(j)]
+    if stale_count:
+        print(f"  {display_name}: skipping {stale_count} posting(s) older than "
+              f"{FRESHNESS_WINDOW_DAYS} days (not re-enriching/re-scoring every run)")
 
     # FIX (2026-08-27): the search results above only ever give
     # p.get("department") as raw_description - a one- or two-word

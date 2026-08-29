@@ -86,6 +86,9 @@ description text.
 """
 
 import re
+from datetime import datetime, timedelta, timezone
+
+from job_dates import parse_posted_datetime
 
 # =============================================================================
 # RESUME DATA
@@ -581,3 +584,43 @@ _INDIA_LOCATION_KEYWORDS = [
 def is_india_location(location: str) -> bool:
     loc = (location or "").lower()
     return any(kw in loc for kw in _INDIA_LOCATION_KEYWORDS)
+
+
+# Added 2026-08-29, part of the /refresh architecture change: Aman
+# wants ONLY postings from the last 24 hours, applied UNIFORMLY across
+# every platform - not the mix that existed before (a 2-day EFFICIENCY
+# buffer on Workday/SmartRecruiters/pcsx only, meant to avoid wasted
+# fetch/enrichment work on old postings state.py already knows about;
+# Greenhouse/Lever/Ashby/DE Shaw had NO freshness filtering at all).
+# This is a separate, stricter, product-level rule - see main.py's
+# fetch_and_score_all() for where this actually gets applied to the
+# final job list, once per job, regardless of platform.
+REFRESH_WINDOW_HOURS = 24
+
+
+def is_recently_posted(job: dict, hours: int = REFRESH_WINDOW_HOURS) -> bool:
+    """
+    True if `job` was posted within the last `hours` hours, using
+    parse_posted_datetime() (job_dates.py) to turn whatever that
+    platform's own posted-date data looks like into one comparable
+    real datetime - see that function's docstring for exactly how
+    precise (or not) that is per platform.
+
+    UNKNOWN AGE PASSES THE FILTER (returns True), not fails it - DE
+    Shaw has NO posted-date field at all, so parse_posted_datetime()
+    always returns None for it, and there's no way to ever confirm
+    a DE Shaw job is within the window. Silently dropping every DE
+    Shaw posting over an unanswerable question felt worse than
+    letting them through unfiltered - same "can't tell -> don't
+    assume the worst" reasoning already used for Workday's own
+    unrecognized postedOn labels (see workday_posted_on_days() in
+    job_dates.py). Practical effect: DE Shaw's freshness is
+    unverified, not guaranteed, under this filter - worth knowing
+    before trusting a DE Shaw match_score the same way you'd trust
+    one from a platform that gives real timestamps.
+    """
+    posted_at = parse_posted_datetime(job)
+    if posted_at is None:
+        return True
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    return posted_at >= cutoff

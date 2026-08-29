@@ -40,7 +40,7 @@ from datetime import datetime, timezone
 
 from companies import TIER1_COMPANIES, TIER2_COMPANIES, CUSTOM_COMPANIES
 from fetchers import FETCHERS
-from scoring import score_job, is_relevant_title, is_india_location
+from scoring import score_job, is_relevant_title, is_india_location, is_recently_posted
 from state import load_seen, save_seen, split_new_jobs
 
 # main.py doesn't need to know or care which tier a company belongs
@@ -204,15 +204,25 @@ def fetch_and_score_all() -> dict:
         }
     """
     all_jobs = fetch_all_jobs()
-    # Two independent filters, both applied before scoring: title has
-    # to look like a Software Engineer role, AND location has to look
-    # India-based (added 2026-08-28 - Aman only wants India postings;
-    # see is_india_location()'s docstring in scoring.py for exactly how
-    # that's detected and its known limits). Order doesn't matter here
-    # since both are just text checks on fields already on the job dict.
+    # Three independent filters, all applied before scoring: title has
+    # to look like a Software Engineer role, location has to look
+    # India-based (see is_india_location()'s docstring in scoring.py),
+    # AND (added 2026-08-29, part of the /refresh architecture change)
+    # it has to have been posted within the last 24 hours
+    # (is_recently_posted() - see scoring.py for exactly how that's
+    # checked per platform and its known precision limits, especially
+    # for Workday and DE Shaw). This used to only exist as a per-
+    # platform FETCH-efficiency trick for Workday/SmartRecruiters/pcsx
+    # (skip re-enriching postings state.py already knows about) -
+    # applying it HERE too, uniformly, on every platform's results
+    # AFTER fetching, is what actually makes "posted within 24 hours"
+    # a real guarantee across the whole system, not just an accident of
+    # which platforms happened to get a fetch-time optimization.
     relevant_jobs = [
         j for j in all_jobs
-        if is_relevant_title(j["title"]) and is_india_location(j["location"])
+        if is_relevant_title(j["title"])
+        and is_india_location(j["location"])
+        and is_recently_posted(j)
     ]
     scored_jobs = [score_job(j) for j in relevant_jobs]
     # Highest score first, so the strongest fits are the first thing

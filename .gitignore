@@ -1,0 +1,10 @@
+# Python bytecode cache - regenerated automatically, not source code
+__pycache__/
+*.pyc
+
+# Claude Code tooling state - not part of the project itself
+.claude/
+
+# Runtime state written by the app while it runs - not source code
+matches_log.csv
+seen_jobs.json
