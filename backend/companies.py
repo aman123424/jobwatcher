@@ -214,6 +214,13 @@ CUSTOM_COMPANIES = [
   # that was found (loc_query looked like it worked but never did).
   ("Amazon", "amazon", "IND|software,backend,frontend,full stack"),
   ("DE Shaw", "deshaw", "deshaw.com"),
+  # Atlassian's fetch_atlassian() (fetchers.py) takes no real per-company
+  # config - the endpoint URL is fixed and returns every open role
+  # worldwide in one call, no identifier needed to point it at the right
+  # company the way every other platform's config string does. This
+  # placeholder string only exists to satisfy companies.py's own
+  # self-check below (every CUSTOM_COMPANIES config must be non-empty).
+  ("Atlassian", "atlassian", "no-config-needed"),
 ]
 
 # `if __name__ == "__main__":` is a standard Python pattern meaning

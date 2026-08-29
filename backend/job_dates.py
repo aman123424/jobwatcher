@@ -90,6 +90,18 @@ def parse_posted_datetime(job: dict):
         "it's very new." Callers need to decide what None should mean
         for their own purposes (see is_recently_posted() in scoring.py
         for the choice made there).
+      - Atlassian: a real timestamp with both date and time -
+        "2026-08-18 08:11 AM" (portalJobPost.updatedDate) - but with NO
+        timezone indicator anywhere in the response. Atlassian's own
+        iCIMS instance doesn't say which timezone this clock is set to
+        (Atlassian itself is headquartered across Sydney/San Francisco/
+        Austin, so there's no single obvious guess either). Treated as
+        UTC here - the same "pick the one universal reference point
+        rather than guess a specific local zone" approach already used
+        for Amazon's day-only dates above - meaning this is an
+        approximation of the real posting instant, not a guaranteed-
+        exact one, same honesty this function already applies to
+        Workday/Amazon.
     """
     updated_at = job.get("updated_at")
     platform = job.get("platform")
@@ -105,6 +117,13 @@ def parse_posted_datetime(job: dict):
     if platform == "amazon":
         try:
             dt = datetime.strptime(updated_at, "%B %d, %Y")
+        except ValueError:
+            return None
+        return dt.replace(tzinfo=timezone.utc)
+
+    if platform == "atlassian":
+        try:
+            dt = datetime.strptime(updated_at, "%Y-%m-%d %I:%M %p")
         except ValueError:
             return None
         return dt.replace(tzinfo=timezone.utc)
