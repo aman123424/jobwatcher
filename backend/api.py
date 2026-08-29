@@ -94,6 +94,7 @@ to show.
 from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from main import MIN_SCORE, fetch_and_score_all
@@ -102,6 +103,29 @@ from job_dates import parse_posted_datetime
 app = FastAPI(
     title="jobwatch API",
     description="Returns Software-Engineer job postings scored against Aman's resume.",
+)
+
+# CORS ("Cross-Origin Resource Sharing"): by default, a browser blocks
+# a page running on one origin (e.g. the frontend dev server at
+# http://localhost:5173) from calling an API on a DIFFERENT origin
+# (this server, http://127.0.0.1:8000) - different port counts as a
+# different origin even on the same machine. Without this, every fetch()
+# call the frontend makes here would fail silently with a CORS error
+# visible only in the browser console, not as a normal HTTP error.
+# Restricted to the frontend's own known dev-server origins (both
+# "localhost" and "127.0.0.1" - browsers treat them as different
+# origins even though they resolve to the same machine) rather than "*"
+# (allow everyone) - reasonable for a personal tool with no auth (see
+# this file's own "NO AUTH FOR NOW" note above): no reason to let ANY
+# website that happens to load in your browser call this API.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
 )
 
 
