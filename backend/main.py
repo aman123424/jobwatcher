@@ -49,7 +49,7 @@ from state import load_seen, save_seen, split_new_jobs
 # By the time fetch_all_jobs() runs, every company is just
 # (display_name, platform, slug) and FETCHERS[platform] handles the
 # rest, Tier 1 or Tier 2 alike.
-ALL_COMPANIES = TIER1_COMPANIES + TIER2_COMPANIES + CUSTOM_COMPANIES
+ALL_COMPANIES = CUSTOM_COMPANIES + TIER1_COMPANIES + TIER2_COMPANIES
 
 MIN_SCORE = 50  #only notify for score >= 50/100.
 

@@ -204,8 +204,7 @@ NEEDS_MORE_INFO = [
 # something different for each platform - see each fetch_* function's
 # docstring in fetchers.py for exactly what its config string expects.
 CUSTOM_COMPANIES = [
-  ("Qualcomm", "pcsx", "careers.qualcomm.com|qualcomm.com|India"),
-  # Microsoft needs the query filter (unlike Qualcomm) - a first live run
+  # Microsoft needs the query filter - a first live run
   # without one hit the 2000-job safety cap pulling EVERY open Microsoft
   # role worldwide, not just engineering ones. Multiple keywords (not
   # just "software engineer") so titles like "Backend Developer" with
