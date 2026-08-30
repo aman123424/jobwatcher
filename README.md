@@ -85,16 +85,21 @@ few concrete reasons:
 
 ## Architecture
 
-Six files now (was five before the FastAPI backend), each with one job:
+**Repo restructured 2026-08-29** into `backend/` and `frontend/`
+top-level folders (was a flat directory before) — see the "Repo
+restructure" section below for why and how this was verified safe.
+Backend is seven files now (was five before the FastAPI backend, six
+after it, seven after `job_dates.py` was split out), each with one job:
 
 | File | Responsibility |
 |---|---|
 | `companies.py` | Pure data — which companies, which platform, which slug/identifier. Split into `TIER1_COMPANIES`, `TIER2_COMPANIES`, `CUSTOM_COMPANIES` (one-off non-standard integrations), and `NEEDS_MORE_INFO` (flagged, not yet trustworthy enough to include). |
 | `fetchers.py` | One function per platform. Each one calls that platform's API and normalizes the very different response shapes into one common job dict — `source_company`, `platform`, `job_id`, `title`, `location`, `url`, `updated_at`, `raw_description`. Everything downstream only ever sees this one shape, regardless of which platform a job came from. Also owns per-company fetching concurrency (`ThreadPoolExecutor`, 10 at once) and, for platforms confirmed sorted newest-first (Workday, SmartRecruiters), early-stop-on-staleness logic. |
-| `scoring.py` | Evidence-weighted, JD-importance-aware match scoring against Aman's real resume content (rewritten 2026-08-28 - see that section above), 0-100, plus a plain-English reason. Also filters to Software-Engineer-shaped titles, India-only locations, and infers rough seniority from the title. |
-| `state.py` | Remembers which jobs have already been shown, across runs, via a JSON file keyed on `(platform, job_id)` — so a re-run only reports genuinely new postings, not the same list every time. |
+| `job_dates.py` | Added 2026-08-29, split out of `fetchers.py` specifically to break a circular import (`scoring.py` needed date-parsing logic that used to live in `fetchers.py`, but `fetchers.py` already imports FROM `scoring.py`). The one shared place that turns each platform's very different raw "posted date" data into a real, comparable Python datetime — used by `fetchers.py` (Workday's early-stop pagination), `scoring.py` (the 24-hour freshness filter), and `api.py` (the human-readable `job_posted_date` display). |
+| `scoring.py` | Evidence-weighted, JD-importance-aware match scoring against Aman's real resume content (rewritten 2026-08-28 - see that section above), 0-100, plus a plain-English reason. Also filters to Software-Engineer-shaped titles, India-only locations, infers rough seniority from the title, and (added 2026-08-29) filters to jobs posted within the last 24 hours (`is_recently_posted()`). |
+| `state.py` | Remembers which jobs have already been shown, across runs, via a JSON file keyed on `(platform, job_id)` — used by the still-present but no-longer-API-exposed `find_new_matches()` in `main.py` (see the `/refresh` architecture section below for why it's no longer wired to an endpoint). |
 | `main.py` | Runs the whole pipeline end to end. Exposes two entry points: `fetch_and_score_all()` (read-only: fetch → filter → score, no side effects) and `find_new_matches()` (built on top of the first: also filters by `MIN_SCORE`, diffs against `state.py`, logs, and saves) — both the CLI's `run()` and `api.py`'s endpoints call these same two functions rather than each having their own copy of the pipeline logic. |
-| `api.py` | FastAPI backend (added 2026-08-27) — three GET endpoints (`/jobs`, `/jobs/best_match`, `/jobs/new`) exposing the exact same pipeline over HTTP. No auth (deliberate, for local/personal use). See the FastAPI section below for the full design. |
+| `api.py` | FastAPI backend, **rewritten 2026-08-29** around a fetch-once/read-many cache architecture — see the dedicated section below for the full design. `GET /jobs`, `GET /jobs/best_match`, `POST /refresh`. CORS enabled for the frontend's dev-server origin. No auth (deliberate, for local/personal use). |
 
 The normalization step in `fetchers.py` is the load-bearing design
 choice — it's what let three completely different pagination/response
@@ -102,6 +107,10 @@ formats (Greenhouse's `jobs` array, SmartRecruiters' paginated
 `content` list, Workday's POST-based search) plug into the exact same
 scoring and state-tracking logic without either of those ever needing
 to know which platform a job came from.
+
+`frontend/` (added 2026-08-29) is a React + TypeScript app built with
+Vite, talking to the backend over HTTP — see "The React frontend"
+section below for its structure and design.
 
 ---
 
@@ -126,10 +135,11 @@ pagination bug that was silently capping every large company at 40
 jobs regardless of its real total — see Challenges for the full story,
 since it took three attempts to find the actual cause.
 
-As of the most recent full run: **43 companies configured** (19 Tier 1
-+ 20 Tier 2 + 4 custom). `companies.py` is the current source of truth
-for the exact list — this number will keep moving as more companies
-get resolved out of `NEEDS_MORE_INFO`.
+As of the most recent full run: **44 companies configured** (19 Tier 1
++ 20 Tier 2 + 5 custom, after Atlassian was added 2026-08-29 - see
+below). `companies.py` is the current source of truth for the exact
+list — this number will keep moving as more companies get resolved out
+of `NEEDS_MORE_INFO`.
 
 ## Custom companies — Amazon, Microsoft, DE Shaw added (2026-08-26)
 
@@ -167,6 +177,43 @@ auth token expires every hour with no found way to mint a fresh one),
 and Siemens + Deloitte + CornerStone (all three run the same
 Cornerstone OnDemand "CSOD" platform, needs a bearer token only
 visible in an authenticated session).
+
+## Atlassian added (2026-08-29)
+
+Aman found Atlassian's own careers listing feed himself
+(`atlassian.com/endpoint/careers/listings`) and asked for it to be
+checked before building. Confirmed live: a single, plain,
+unauthenticated GET returns EVERY open role worldwide in one response
+- 233 total postings, 27 India-related at check time - with real full
+HTML description content (`responsibilities`, `qualifications`)
+already included per job, no separate per-job detail call needed
+(unlike Workday/SmartRecruiters/pcsx). Backed by iCIMS (the same ATS
+vendor behind the still-blocked RippleHire/CornerStone entries in
+`NEEDS_MORE_INFO`), but this particular endpoint needs no auth at all -
+a good reminder that "same vendor" doesn't automatically mean "same
+blocker."
+
+One new wrinkle handled in `job_dates.py`: Atlassian's own timestamp
+format (`"2026-08-18 08:11 AM"`) carries no timezone indicator
+anywhere in the response, and Atlassian itself has no single
+headquarters timezone to guess (offices split across Sydney/San
+Francisco/Austin) - treated as UTC, the same "pick the one universal
+reference point" approach already used for Amazon's day-only dates,
+documented as an approximation rather than a guaranteed-exact time.
+
+`fetch_atlassian()` needs no real per-company config string (the URL
+never changes, there's no company-specific identifier the way every
+other platform needs one) - first platform in this codebase where that
+was true, handled with a placeholder config string just to satisfy
+`companies.py`'s existing self-check that every `CUSTOM_COMPANIES`
+entry has a non-empty config.
+
+Verified live end-to-end through the full pipeline before considering
+it done: fetched -> India + relevant-title filtered down to 3 -> ran
+through `score_job()` successfully (scores reflected genuinely senior
+"Principal"-level roles outside Aman's fit, not a scoring bug) -> all
+modules re-imported cleanly, `companies.py`'s self-check passed at 44
+total companies.
 
 ## Tier 3 — status: researched, not built
 
@@ -257,11 +304,32 @@ job descriptions enriched successfully, zero rate-limit errors, ~7
 minutes for that one company (acceptable since it runs in parallel
 with everything else, not added on top).
 
+**`pcsx` had ZERO freshness filtering at all (found 2026-08-28).** Aman
+directly asked "are there really 550 relevant jobs in the last 24 hrs,
+or am I missing something" after a Qualcomm run returned that many
+matches. Checked: `FRESHNESS_WINDOW_DAYS` was referenced in
+`fetch_workday`/`fetch_smartrecruiters`/`fetch_amazon`, but never in
+`fetch_pcsx` at all - every one of Qualcomm's ~550 India postings was
+getting the expensive, deliberately-sequential per-job description
+enrichment above, regardless of age. Confirmed live: of 558 total India
+postings, only 14 were within the 2-day freshness window: the rest
+ranged up to 409 DAYS old. Unlike Workday/SmartRecruiters, `pcsx` has
+no reliable sort to early-stop pagination on (`sort_by` tested live
+with several values, all identical to the default) - so instead of an
+early-stop, a plain post-fetch filter on the already-parsed
+`postedTs`/`updated_at` field was added, which doesn't need reliable
+ordering to be correct. Result: Qualcomm's fetch dropped from ~427s to
+~40.7s; Microsoft (same `pcsx` platform, different subdomain) dropped
+from a similarly bloated time to ~20.2s.
+
 ---
 
 ## The FastAPI backend (2026-08-27)
 
-Converted the CLI-only tool into a live HTTP API, reusing 100% of the
+**Historical - superseded 2026-08-29 by the `/refresh` cache
+architecture below (endpoints changed, `GET /jobs/new` removed).**
+Kept here as the record of the original design. Converted the
+CLI-only tool into a live HTTP API, reusing 100% of the
 existing pipeline logic rather than rewriting it. `main.py` was
 refactored to expose two functions the API calls directly:
 `fetch_and_score_all()` (read-only: fetch + score everything, no
@@ -375,6 +443,180 @@ postings, and there's no plain-HTTP way to resolve one to the other -
 see Challenges - so SquarePoint links now point at the real listing
 page instead of a URL that looks specific but silently lands on the
 wrong content).
+
+---
+
+## The `/refresh` cache architecture rewrite (2026-08-29)
+
+**What triggered it:** Aman shared a real `/jobs/best_match` response
+where most of the jobs were from months back - a genuine surprise,
+since the freshness filtering work above was believed to already
+guarantee recency. Investigating surfaced the real cause: freshness
+filtering had only ever been an internal FETCH-EFFICIENCY trick for
+Workday/SmartRecruiters/`pcsx` (skip pages that are confirmed stale,
+so a run doesn't waste time re-fetching thousands of already-seen
+postings) - it was never a universal guarantee applied to
+Greenhouse/Lever/Ashby/Amazon/DE Shaw results, which had no age
+filtering of any kind by original design. On top of that, every
+endpoint call was triggering its OWN full live fetch across every
+company - `/jobs` and `/jobs/best_match` could each take 1-4+ minutes,
+and calling either one twice in a row paid that full cost twice for
+usually the same answer.
+
+**Aman's own explicit redesign, given as a complete spec, not a vague
+direction:** fetching becomes a separate, deliberately-triggered
+action (a "refresh" button on the eventual frontend) that fetches jobs
+posted within the last 24 hours across every tier and stores them,
+with a timestamp, in a backend-side list; reading (`/jobs`,
+`/jobs/best_match`) then only ever serves whatever that last refresh
+found - no new fetching per read. Scoring happens once, at
+fetch/store time, not recomputed on every read.
+
+**What this actually required, in the order it was built:**
+
+1. **A real 24-hour freshness filter, applied universally** -
+   `is_recently_posted()`, added to `scoring.py`, checks every job
+   (regardless of platform) against a 24-hour window using
+   `parse_posted_datetime()`. Unknown-age jobs (DE Shaw, which has no
+   posted-date field in its response at all) deliberately PASS the
+   filter rather than being silently excluded - "we can't tell" is
+   treated as "don't lose it," not as "assume it's old."
+2. **Breaking a circular import to get there.** `scoring.py` needed
+   date-parsing logic that lived in `fetchers.py` - but `fetchers.py`
+   already imports `is_relevant_title` FROM `scoring.py` (used to
+   pre-filter which jobs get expensive per-job detail enrichment). Two
+   files each importing from the other is unresolvable in Python.
+   Fixed by extracting the shared date-parsing logic
+   (`parse_posted_datetime`, `workday_posted_on_days`) into a brand
+   new, dependency-free `job_dates.py` that both files import FROM,
+   neither importing the other for this. Each of the three touched
+   modules (`job_dates.py`, `scoring.py`, `fetchers.py`) was verified
+   to import cleanly independently before moving on, not assumed fine
+   because the diff looked right.
+3. **The cache itself, in `api.py`.** A plain module-level dict
+   (`_cached_jobs = {"updated_at": None, "jobs": []}`) - the same "a
+   plain variable is genuinely fine for one person's use" reasoning
+   `state.py` already applies to disk, applied here to memory instead.
+   `POST /refresh` is now the ONLY endpoint that touches the network:
+   it runs the full pipeline, stores the result plus a fresh
+   timestamp, and returns it. `GET /jobs` and `GET /jobs/best_match`
+   only ever read this dict - near-instant, safe to call repeatedly,
+   correctly return `{"updated_at": null, "jobs": []}` (not an error)
+   before the first refresh of a server's lifetime. Both moved from
+   returning a bare JSON array to `{"updated_at": ..., "jobs": [...]}`,
+   mirroring Aman's own specified `{updatedAt, jobs}` shape (spelled
+   snake_case for consistency with every other field name in this
+   API).
+4. **`GET /jobs/new` removed entirely (2026-08-29, same day, separate
+   explicit instruction).** The old stateful "what's new since last
+   time" endpoint (backed by `seen_jobs.json`/`matches_log.csv`) wasn't
+   part of the new architecture and was deliberately cut rather than
+   half-migrated - Aman's own words: he'll have this working
+   client-side later, "we'll make some more changes later so that we
+   get a workaround for `/jobs/new` without creating a new endpoint."
+   `find_new_matches()` itself was left alone in `main.py`, unused for
+   now, in case it's reused for that later. One important consequence
+   worth remembering: a `--reload` restart of `uvicorn` starts a brand
+   new Python process, which wipes `_cached_jobs` back to empty (same
+   as a normal restart) - documented directly in `api.py`'s own module
+   docstring so it isn't rediscovered as a surprise later.
+
+**Verified live end-to-end, not just import-checked:** started a real
+server, confirmed `GET /jobs` returned the empty-cache shape correctly
+before any refresh; called `POST /refresh` (58.8s, HTTP 200, 10-11
+jobs depending on the run); confirmed `GET /jobs` and `GET
+/jobs/best_match` immediately after both returned in ~3ms (not a new
+fetch) with the exact same `updated_at` timestamp as the refresh call,
+and `best_match` correctly narrowed to only jobs scoring >= `MIN_SCORE`.
+Re-verified the identical flow again from inside `backend/` after the
+repo restructure below, to confirm the move hadn't broken anything.
+
+---
+
+## Repo restructure — `backend/`/`frontend/` split (2026-08-29)
+
+Aman moved every Python file into a new `backend/` folder himself
+(outside any conversation with Claude) and created an empty `frontend/`
+folder alongside it, then asked for a check on whether anything needed
+to change in the code as a result. Nothing did, and this was verified
+rather than assumed:
+
+- Every backend module imports every other one by bare name
+  (`from job_dates import ...`), and since all of them moved together
+  as a unit, that still resolves correctly regardless of which
+  directory a command is run from.
+- `state.py`'s `seen_jobs.json` path and `main.py`'s
+  `matches_log.csv` path both already used
+  `os.path.join(os.path.dirname(__file__), ...)` rather than a bare
+  relative path - written that way from the start specifically so a
+  change like this wouldn't break them. Confirmed live: running the
+  full `/refresh` -> `/jobs` -> `/jobs/best_match` flow from inside
+  `backend/` did NOT create stray copies of either file in the parent
+  directory.
+- No hardcoded absolute paths existed anywhere in the codebase to
+  begin with (checked directly, not assumed).
+
+**Git rename-detection, and a `.gitignore` added the same session:**
+because the files were moved outside git (not via `git mv`), a plain
+`git status` initially showed 10 files "deleted" at the repo root plus
+an entirely new, untracked `backend/` folder - looking like unrelated
+events even though nothing was actually deleted. Explained to Aman
+that `git add -A` followed by `git status` lets git's own
+similarity-detection recognize most of these as `renamed:` pairs
+automatically (confirmed live - most files showed as clean renames;
+`api.py` and the new `job_dates.py` showed as `new file` instead,
+expected since their content changed substantially in the same
+session, which drops below git's rename-similarity threshold). A new
+root-level `.gitignore` was added at the same time, at Aman's request,
+excluding `__pycache__/`, `*.pyc`, `.claude/` (Claude Code tooling
+state, not project code), `matches_log.csv`, and `seen_jobs.json`
+(runtime-generated state, not source) - noted for Aman that this stops
+NEW copies from being picked up but doesn't itself untrack files
+already committed (a `git rm --cached` step, offered but deliberately
+left for Aman to run himself alongside his own commit).
+
+---
+
+## The React frontend (2026-08-29)
+
+Scaffolded with Vite's `react-ts` template (not Create React App,
+which is deprecated) - React 19, TypeScript 6, `oxlint` for linting.
+Structured around the same DRY/SOLID principles the backend already
+follows, explicitly requested rather than assumed:
+
+| File | Responsibility |
+|---|---|
+| `src/api/types.ts` | `JobMatch`/`JobsResponse` types, deliberately mirroring `api.py`'s Pydantic models field-for-field - the one place a backend shape change needs to be reflected on the frontend. |
+| `src/api/client.ts` | One shared `request()` helper behind three thin functions (`fetchAllJobs`, `fetchBestMatchJobs`, `refreshJobs`) - DRY: one definition of "how do we call the backend and what counts as failure," not three independent copies that could drift apart. Backend URL configurable via `VITE_API_BASE_URL` (see `.env.example`), defaulting to `uvicorn`'s own documented local address. |
+| `src/hooks/useJobsData.ts` | Owns all data/view state (which view is active, the jobs list, the last-refreshed timestamp, two SEPARATE loading flags for "switching views" vs "running a real refresh" since one is near-instant and the other can take a minute, and error state) - single responsibility: DATA, not layout. |
+| `src/components/RefreshBar.tsx` | The "Fetch Fresh" button and last-refreshed display. |
+| `src/components/ViewToggle.tsx` | "All Relevant" / "Best Match" switch. |
+| `src/components/JobCard.tsx` | One job's display - the only component that touches an individual job's fields. |
+| `src/components/JobList.tsx` | Every list-level state (loading, error, no-data-yet, empty-after-refresh, real results) - keeps `JobCard` itself down to just the happy-path render of one real job. |
+| `src/App.tsx` | Pure composition - wires the hook's state into the components above, no business logic of its own. |
+
+**Backend change required to connect them:** CORS middleware added to
+`api.py` (none existed before) - without it, every `fetch()` call from
+the frontend's dev server (`localhost:5173`) to the backend
+(`127.0.0.1:8000`) would fail as a browser-level CORS block, invisible
+as a normal HTTP error. Scoped to the frontend's own known dev-server
+origins specifically, not `"*"` - consistent with the API's existing
+no-auth-but-not-wide-open posture.
+
+**Verified live through an actual browser session, not just
+`tsc`/lint:** `npx tsc -b` and `npm run lint` both clean (one oxlint
+warning about the standard "fetch on mount" `useEffect` pattern -
+confirmed a false positive for this specific idiom, silenced with a
+documented inline disable rather than restructured around a
+non-issue). With both dev servers running: initial load correctly
+showed the empty-cache "no data yet" state; clicking "Fetch Fresh"
+showed the in-flight "Fetching fresh jobs..." state, then rendered 6
+real scored jobs (title, company, score badge, match reason, posted
+date) after the real ~50s network refresh completed; switching to
+"Best Match" correctly filtered to empty (all 6 scored below
+`MIN_SCORE`) near-instantly, confirming it reads the cache rather than
+re-fetching; zero console errors throughout, confirming CORS was
+actually working end-to-end and not just configured.
 
 ---
 
@@ -531,13 +773,43 @@ loopback (`127.0.0.1`), and a browser trying `localhost` can attempt
 the IPv6 loopback (`::1`) first depending on OS/browser behavior;
 confirmed live that this server genuinely refuses connections on `::1`
 entirely. Switching the browser URL to `127.0.0.1` directly was tried
-next but Aman reported the SAME symptom even then - still unresolved
-as of this log entry; the leading theory being investigated next is
-that `/jobs/best_match` triggers the full ~1-4 minute live pipeline and
-`uvicorn`'s access-log line only prints AFTER a request finishes, not
-when it arrives - so "nothing in the terminal" a few seconds after
-reloading may just mean the request is still in flight, not that it
-never arrived. Not yet confirmed either way.
+next but Aman reported the SAME symptom even then - ruled out as the
+real cause once the actual root cause below was found; ultimately
+resolved when Aman restarted his laptop entirely, which cleared
+whatever OS-level socket state was involved.
+
+**Root cause, found later, on a DIFFERENT occasion:** an ORPHANED
+socket, not a live process. A process killed with `Stop-Process -Force`
+(confirmed gone via `Get-Process` - no PID, no process) can still leave
+its socket showing as `LISTENING` in `netstat` and silently
+accepting+hanging connections for the full request timeout - Windows
+doesn't always release a socket the instant its owning process dies. A
+second, related variant of the exact same symptom turned up again
+during frontend testing (2026-08-29): after stopping a test `uvicorn`
+process, `netstat` still showed port 8000 as `LISTENING` even though
+`Get-Process` confirmed that PID was gone - the actual culprit,
+found via `Get-CimInstance Win32_Process`, was a leftover
+`multiprocessing` spawn WORKER (`--multiprocessing-fork`) whose parent
+process had already died, but which was still alive and still holding
+the socket open on its own. Killing that worker process directly (not
+its already-dead parent) is what actually freed the port. General
+lesson for this project going forward: `netstat` showing `LISTENING`
+is not proof a real, functioning server is behind it - cross-reference
+the PID against `Get-Process`/`Get-CimInstance` before trusting it,
+and remember a killed process can still have orphaned children holding
+the resource it used to own.
+
+### Workday platform outage — confirmed external, not a code bug
+
+Aman reported "many Workday companies failing" on a run. Rather than
+assume a regression in `fetch_workday` (which had already been
+live-verified working, see the "stuck at exactly 40 jobs" story
+above), checked directly against multiple Workday tenants and
+confirmed the failures were coming from Workday's OWN platform being
+down at the time - not this codebase. Documented here mainly as a
+reminder of the general practice: a sudden multi-company failure
+pattern is a strong signal to check whether the shared underlying
+platform itself is having a bad day, before assuming a fetcher broke.
 
 ---
 
@@ -572,15 +844,16 @@ so far:
 
 ## Next steps / open items
 
-1. **Unresolved right now: `/jobs/best_match` "nothing in the
-   terminal."** See the last Challenges entry above - stale-process
-   conflict fixed, IPv6/localhost theory tested and ruled out (Aman
-   tried `127.0.0.1` directly, same symptom), leading theory is the
-   request is just still running (full pipeline takes 1-4 minutes,
-   access-log line only prints on completion) but this has NOT been
-   confirmed yet - was mid-investigation when this log entry was
-   written, including a background `curl` test to the same endpoint
-   whose result wasn't back yet.
+1. **A real replacement for `GET /jobs/new`.** Deliberately removed
+   from the backend (see the `/refresh` architecture section above) on
+   Aman's own instruction that he'll build a workaround for this
+   "without creating a new endpoint" later - not yet designed. Likely
+   candidates once it's picked back up: diffing consecutive `/refresh`
+   results client-side, or persisting a seen-set in the browser
+   (`localStorage`) rather than the backend's old `seen_jobs.json`
+   approach. `find_new_matches()`/`state.py` were left untouched in the
+   backend specifically so they're available to reuse if that ends up
+   being the right shape after all.
 2. **Missing-required-skill penalty in scoring.py.** The Schrödinger
    finding above (85 score built almost entirely from Nice-to-Have
    matches while the #1 Required skill has zero overlap) is real and
@@ -600,16 +873,14 @@ so far:
    postings that were always going to get filtered out), but worth
    remembering if a real title ever slips past `is_relevant_title()`'s
    keyword list.
-5. **Notification channel.** Results are queryable live via the API
-   now (`GET /jobs/new` etc.), and still logged to `matches_log.csv`,
-   but no PUSH notification (email, Telegram, etc.) exists yet - the
-   API makes this a much smaller next step than it used to be (just
-   needs something to poll `/jobs/new` on a schedule and forward what
-   comes back).
-6. **Scheduling.** Nothing runs the API or the CLI on a recurring
-   schedule yet - would need a cron job, a scheduled cloud function, or
-   similar to poll `/jobs/new` automatically instead of Aman (or
-   something) calling it manually.
+5. **Notification channel.** The frontend now makes results viewable
+   without curl/Postman, but there's still no PUSH notification
+   (email, Telegram, etc.) - would need something to call `POST
+   /refresh` on a schedule and forward whatever's new, once the
+   "what's new" question from item 1 above has an answer.
+6. **Scheduling.** Nothing calls `POST /refresh` on a recurring
+   schedule yet - a person (or something else) still has to trigger it
+   manually, whether via the frontend button or a direct API call.
 7. **The remaining `NEEDS_MORE_INFO` companies** — RippleHire (Axis
    Bank/Tredence - real payload still doesn't work outside a browser,
    see Challenges), TurboHire (Pine Labs/Flipkart - 0 current openings
@@ -624,3 +895,10 @@ so far:
    technically possible) is worth the extra engineering effort, given
    they'd need meaningfully different, more fragile approaches than
    everything built so far.
+9. **Frontend polish and deployment.** The frontend is functionally
+   complete and live-verified against a local backend, but has had no
+   real design pass beyond the base dark/light theme inherited from
+   the Vite scaffold, and neither the frontend nor backend has been
+   deployed anywhere outside `localhost` yet - both still assume a
+   same-machine dev setup (hardcoded default `VITE_API_BASE_URL`, CORS
+   allowlist scoped to `localhost:5173` only).

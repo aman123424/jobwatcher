@@ -96,11 +96,13 @@ TIER1_COMPANIES = [
     ("Graviton",     "greenhouse",     "gravitonresearchcapital"),
     ("SquarePoint",  "greenhouse",     "squarepointcapital"),
     ("Schrodinger",  "greenhouse",     "schrdinger"),
+    ("Zscaler",      "greenhouse",     "zscaler"),
     ("Meesho",       "lever",          "meesho"),
     ("Sprinto",      "lever",          "Sprinto"),
     ("CRED",         "lever",          "cred"),
     ("Snowflake",    "ashby",          "snowflake"),
     ("Navi",         "ashby",          "navi"),
+    ("Lg Ads Solutions", "ashby",      "lgads"),
     ("ServiceNow",   "smartrecruiters","ServiceNow"),
     ("Ixigo",        "smartrecruiters", "ixigo")
 ]
@@ -127,7 +129,8 @@ TIER2_COMPANIES = [
     ("Wells Fargo",  "workday", "wf|wd1|WellsFargoJobs"),
     ("CaterPillar",  "workday", "cat|wd5|CaterpillarCareers"),
     ("NatWest",      "workday", "rbs|wd3|RBS"),
-    ("Sprinklr",     "workday", "sprinklr|wd1|careers")
+    ("Sprinklr",     "workday", "sprinklr|wd1|careers"),
+    ("Baxter",       "workday", "baxter|wd1|baxter"),
 ]
 
 # These CONFIRMED-in-the-CSV companies are deliberately NOT included
