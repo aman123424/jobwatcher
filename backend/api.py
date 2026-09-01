@@ -123,6 +123,19 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        # The deployed frontend (S3 + CloudFront, added 2026-08-31) -
+        # see PROJECT_LOG.md for the deployment details. Both dev and
+        # deployed origins are kept here rather than replacing one with
+        # the other, since local development against this same live
+        # Lambda backend should keep working too.
+        "https://d1gn3ykg202ojt.cloudfront.net",
+        # The custom domain (added 2026-08-31) - a browser's CORS check
+        # is based on the exact Origin it's actually loaded from, so
+        # this needs to be listed explicitly even though it's the SAME
+        # CloudFront distribution as the entry above - the plain
+        # .cloudfront.net domain still works too and is kept here
+        # rather than removed, in case it's ever used directly again.
+        "https://jobwatcher.mykave.in",
     ],
     allow_methods=["GET", "POST"],
     allow_headers=["*"],

@@ -85,6 +85,7 @@ from Greenhouse, Lever, Ashby, DE Shaw, or pcsx, which all give real
 description text.
 """
 
+import html
 import re
 from datetime import datetime, timedelta, timezone
 
@@ -106,7 +107,7 @@ from job_dates import parse_posted_datetime
 # INDEPENDENT of whether any one job posting treats it as important -
 # that's JD_IMPORTANCE, calculated per-job further down, not baked in here.
 RESUME_SKILLS = {
-    "c#": 5, ".net": 5, "typescript": 4, "react": 4, "javascript": 4, "selenium": 4,
+    "c#/.net": 5, "typescript": 4, "react": 4, "javascript": 4, "selenium": 4,
     "typegraphql": 3, "typeorm": 3, "flutter": 3, "graphql": 3,
     "nunit": 3, "moq": 3, "postgresql": 3, "redux": 3, "dsa": 3,
     "system design": 3, "winforms": 3, "sql": 3, "c++": 3, "node.js": 3, "nodejs": 3,
@@ -123,10 +124,10 @@ RESUME_SKILLS = {
 # confidence, by ELIMINATION - anything in RESUME_SKILLS but not listed
 # here). A skill ends up evidential because:
 #   (a) it's named directly inside a real bullet describing work Aman
-#       actually did (e.g. "c#" - "using C#, .NET" at WiseTech Global)
+#       actually did (e.g. "c#/.net" - "using C#, .NET" at WiseTech Global)
 EVIDENTIAL_SKILLS = {
     # (a) named directly in a resume bullet
-    "c#", ".net", "typescript", "react", "selenium", "typegraphql",
+    "c#/.net", "typescript", "react", "selenium", "typegraphql",
     "typeorm", "flutter", "graphql", "nunit", "moq", "postgresql",
     "redux", "spire.pdf", "google oauth", "system design", "ci/cd",
     "unit test", "integration test", "tdd", "github", "copilot", "dsa", "solid principles", "oop",
@@ -165,8 +166,26 @@ def _compile_keyword_pattern(keyword: str) -> re.Pattern:
     punctuation characters like '#'/'+'/'.' already fail the
     [a-z0-9] check on their own - there's nothing extra to handle.
     """
-    return re.compile(r"(?<![a-z0-9])" + re.escape(keyword) + r"(?![a-z0-9])")
+    literals = _KEYWORD_ALTERNATE_SPELLINGS.get(keyword, [keyword])
+    alternation = "|".join(re.escape(lit) for lit in literals)
+    return re.compile(r"(?<![a-z0-9])(?:" + alternation + r")(?![a-z0-9])")
 
+
+# A handful of RESUME_SKILLS entries need to match MORE THAN ONE literal
+# spelling in job text, while still only ever being counted ONCE - see
+# "c#/.net" below. FIXED 2026-08-31: this used to be two entirely
+# separate RESUME_SKILLS entries ("c#": 5 and ".net": 5), which meant
+# any posting mentioning "C#/.NET" together (the normal way it's ever
+# written) got credited TWICE for what is really one real qualification
+# - confirmed live on a Rubrik posting where this alone inflated a job
+# whose ONLY overlapping skill was a minor "Nice-to-have" C#/.NET
+# mention into a 67/100 "Strong match". A job mentioning just "C#"
+# alone, or just ".NET" alone, still matches correctly either way -
+# this only prevents double-crediting when BOTH spellings appear in the
+# same posting (the overwhelmingly common case).
+_KEYWORD_ALTERNATE_SPELLINGS = {
+    "c#/.net": ["c#", ".net"],
+}
 
 # Every keyword's pattern built ONCE here rather than re-compiling the
 # same regex on every single score_job() call - regex compilation has
@@ -186,8 +205,7 @@ def _resume_confidence(keyword: str) -> float:
 # the output says something like "2 years hands-on C#/.NET at WiseTech
 # Global" instead of just repeating the bare keyword "c#".
 RESUME_CONTEXT = {
-    "c#": "2 years hands-on C#/.NET at WiseTech Global (AE Customs, UAE Manifest workflows)",
-    ".net": "2 years hands-on .NET at WiseTech Global",
+    "c#/.net": "2 years hands-on C#/.NET at WiseTech Global (AE Customs, UAE Manifest workflows)",
     "typescript": "TypeScript (React TS) across the HAS Complaints Portal and Shaastra registration platform",
     "react": "React across Desklamp internship, HAS Complaints Portal, and Shaastra registration platform",
     "javascript": "JavaScript underlying all React/web project work - confirmed strong skill",
@@ -452,8 +470,23 @@ def _strip_html(text: str) -> str:
     use a real parser (e.g. BeautifulSoup) instead of a regex, since
     regexes are not a reliable way to parse arbitrary HTML in general
     — but for "strip tags before keyword-matching," this is fine.
+
+    html.unescape() runs FIRST, before the tag-stripping regex - added
+    2026-08-31 after two real bugs traced back to this being missing:
+    (1) Barclays' raw Workday HTML spelled "C++" as "C&#43;&#43;" (the
+    numeric HTML entity for "+") - the literal substring "c++" never
+    appeared anywhere in the text, so the single most important
+    Required skill for that posting was invisible to every keyword
+    match, even though scoring.py's own word-boundary regex was
+    working exactly as designed. (2) A Rubrik posting's description
+    came back with its OWN tags entity-encoded a level deep -
+    "&lt;p&gt;...&lt;/p&gt;" instead of "<p>...</p>" - meaning
+    _HTML_TAG_RE (which only matches literal "<...>") never stripped
+    ANY of it; unescaping first turns that back into real "<p>" tags,
+    which the existing tag-stripping regex then correctly removes.
+    Confirmed live against both real postings before shipping this fix.
     """
-    return _HTML_TAG_RE.sub(" ", text or "")
+    return _HTML_TAG_RE.sub(" ", html.unescape(text or ""))
 
 
 def score_job(job: dict) -> dict:

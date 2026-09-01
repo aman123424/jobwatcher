@@ -1114,6 +1114,31 @@ def fetch_amazon(display_name: str, country_base_query: str) -> list[dict]:
                 if job_date is None or job_date >= cutoff_date:
                     page_has_recent_job = True
 
+                # FIX (2026-08-31): this used to be
+                # `j.get("description_short") or j.get("description", "")`
+                # - "description_short" is a real field (not empty), so
+                # `or` always picked it FIRST, and the actual full
+                # description (confirmed live: ~6,000 chars, vs.
+                # description_short's ~200-char marketing teaser) never
+                # got used at all. Every Amazon job was being scored
+                # against an intro paragraph with zero real requirements
+                # text in it - confirmed as the direct cause of every
+                # single Amazon job scoring close to 0 regardless of fit.
+                # Fixed by using the real "description" field, PLUS
+                # Amazon's own separate "basic_qualifications" and
+                # "preferred_qualifications" fields (confirmed live to
+                # hold real Required/Preferred content) - prefixed with
+                # literal header text so scoring.py's own JD-importance
+                # section detection (_REQUIRED_SECTION_RE /
+                # _PREFERRED_SECTION_RE) correctly recognizes and weighs
+                # them, the same way it already does for every other
+                # platform's real Required/Preferred sections.
+                description_parts = [j.get("description", "")]
+                if j.get("basic_qualifications"):
+                    description_parts.append("Required Qualifications: " + j["basic_qualifications"])
+                if j.get("preferred_qualifications"):
+                    description_parts.append("Preferred Qualifications: " + j["preferred_qualifications"])
+
                 jobs_for_this_query.append({
                     "source_company": display_name,
                     "platform": "amazon",
@@ -1122,7 +1147,7 @@ def fetch_amazon(display_name: str, country_base_query: str) -> list[dict]:
                     "location": j.get("normalized_location", ""),
                     "url": f"https://www.amazon.jobs{job_path}" if job_path else "",
                     "updated_at": posted_date,
-                    "raw_description": j.get("description_short") or j.get("description", ""),
+                    "raw_description": " ".join(description_parts),
                 })
 
             if not page_has_recent_job:

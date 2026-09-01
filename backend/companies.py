@@ -97,6 +97,7 @@ TIER1_COMPANIES = [
     ("SquarePoint",  "greenhouse",     "squarepointcapital"),
     ("Schrodinger",  "greenhouse",     "schrdinger"),
     ("Zscaler",      "greenhouse",     "zscaler"),
+    ("BlackDuck",      "greenhouse",     "blackduck"),
     ("Meesho",       "lever",          "meesho"),
     ("Sprinto",      "lever",          "Sprinto"),
     ("CRED",         "lever",          "cred"),

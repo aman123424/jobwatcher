@@ -1,0 +1,9 @@
+# Dependencies for the LAMBDA deployment specifically - a separate
+# list from requirements.txt (local dev) because Lambda doesn't need
+# uvicorn (see lambda_handler.py's docstring for why - Mangum replaces
+# it entirely) and DOES need mangum, which local dev never touches.
+# Keeping these as two separate files rather than one combined list
+# avoids installing packages neither environment actually needs.
+requests>=2.31.0
+fastapi>=0.110.0
+mangum>=0.17.0
