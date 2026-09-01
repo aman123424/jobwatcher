@@ -23,94 +23,86 @@ FastAPI is a library for building web APIs. The core ideas used below:
     automatically: turning the objects we return into JSON, and
     generating the interactive /docs page mentioned below.
 
-REWRITTEN 2026-08-29 - A REAL ARCHITECTURE CHANGE, NOT JUST A TWEAK:
-Every endpoint used to trigger its OWN full live fetch across every
-company, every single call - meaning /jobs and /jobs/best_match could
-each take 1-4+ minutes, and calling either one twice in a row meant
-paying that cost twice for (usually) the same answer. Aman's own
-explicit design instead: fetching is now a separate, deliberately
-TRIGGERED action (POST /refresh), and reading is now CHEAP - GET /jobs
-and GET /jobs/best_match just serve whatever /refresh last found,
-stored in a plain in-memory cache (_cached_jobs below), until the next
-/refresh call replaces it.
+REWRITTEN 2026-08-29 (cache architecture), REWRITTEN AGAIN 2026-09-02
+(real database, multi-user): fetching is a separate, deliberately
+TRIGGERED action (POST /refresh) from reading (GET /jobs and friends).
+As of 2026-09-02, /refresh no longer stores results in an in-memory
+cache - it UPSERTS every relevant job straight into the real `jobs`
+table in Postgres (see models.py, ingest.py). This is a genuine
+architecture shift, not just a storage swap: jobs are now shared, real
+rows every logged-in user reads from, and a user's relationship to a
+job (saved/applied/not_interested) lives in its own `user_jobs` table,
+completely separate from the job itself - see models.py's own module
+docstring for the full reasoning, and PROJECT_LOG.md for the migration
+story.
 
-THREE ENDPOINTS NOW:
-  - POST /refresh          fetch every company live RIGHT NOW (jobs
-                            posted in the last 24 hours only - see
-                            scoring.py's is_recently_posted()), score
-                            them, and REPLACE the stored cache with the
-                            result. This is the ONLY endpoint that
-                            actually hits the network. Can take a few
-                            minutes, same as every live fetch always
-                            has here.
-  - GET /jobs               returns whatever /refresh last stored — no
-                            new fetch, near-instant, every relevant job
-                            at any score.
-  - GET /jobs/best_match    same stored data, narrowed to
-                            match_score >= MIN_SCORE. Also no new fetch.
+CURRENT ENDPOINTS:
+  - POST /auth/register, POST /auth/login    account creation and
+                            login (see auth_routes.py) - both return a
+                            JWT. No email-verification gate anywhere
+                            yet (Aman's own explicit call - no email
+                            service exists to complete verification
+                            with yet); every account starts, and stays,
+                            with email_verified=False until that's built.
+  - POST /refresh           fetch every company live RIGHT NOW (jobs
+                            posted in the last 24 hours only, India-
+                            based, Software-Engineer-shaped - see
+                            ingest.py), and UPSERT each one into the
+                            real `jobs` table. STILL UNAUTHENTICATED,
+                            deliberately - meant to stay a shared,
+                            global action, not something individual
+                            users can spam (see project cost-planning
+                            notes) - though see this file's docstring
+                            further down for the real open gap this
+                            leaves (no admin-role check yet either).
+  - GET /jobs                "All Jobs" - every job posted in the last
+                            24 hours (or of unknown age), with THIS
+                            logged-in user's own status attached where
+                            one exists. Requires login.
+  - GET /jobs/mine           "My Jobs" - every job this user marked
+                            Applied. No time filter - stays visible
+                            long after a posting ages out of "All
+                            Jobs". Requires login.
+  - GET /jobs/saved          "Saved Jobs" - same idea, status == saved.
+                            Requires login.
+  - POST /jobs/{id}/status   sets (or changes) this user's status on
+                            one job: saved, applied, or not_interested.
+                            Requires login.
 
-REMOVED 2026-08-29: GET /jobs/new (the old stateful "what's new since
-last time" endpoint, backed by seen_jobs.json/matches_log.csv) has been
-deleted entirely - that behavior will eventually be rebuilt as a
-frontend-side workaround on top of the /refresh cache above, not as a
-fourth backend endpoint. Nothing currently calls find_new_matches() in
-main.py; that function itself was intentionally left alone in main.py
-in case it's reused for that later.
-
-/jobs and /jobs/best_match now return `{"updated_at": ..., "jobs":
-[...]}` (a JobsResponse - see below), not a bare JSON array like
-before - mirroring the exact `{updatedAt, jobs}` shape Aman specified
-for the internal cache, so a caller always knows how stale what it's
-looking at is. If /refresh has never been called yet (a fresh server
-start), both read endpoints return `{"updated_at": None, "jobs": []}`
-rather than erroring - there's nothing broken about "nobody's
-refreshed yet," it just means there's nothing to show.
-
-AUTH (added 2026-09-02): real registration/login now exists - see
-auth_routes.py (POST /auth/register, POST /auth/login, both issuing a
-JWT) and auth.py (password hashing, JWT creation/verification,
-get_current_user). Deliberately NO email-verification gate anywhere
-yet - every new account starts with `email_verified=False` and
-nothing checks that flag before allowing registration, login, or
-(eventually) any other feature - there's no email-sending service
-wired up yet to let anyone actually complete verification, so gating
-on it would just lock everyone out. This is Aman's own explicit call,
-not an oversight - revisit once a real email service exists.
-
-The job-related endpoints below (/refresh, /jobs, /jobs/best_match)
-are STILL fully open, no login required at all - multi-user auth
-exists now at the account level, but nothing has been wired up yet to
-actually scope job data per-user (that's the next piece: `user_jobs`
-already exists in the database - see models.py - for exactly this,
-just not read from or written to by any endpoint yet).
+NOT YET BUILT (real, known gaps, not silently faked):
+  - tech_stack and years_experience_required are real fields in every
+    job response already, but always empty/null right now - extracting
+    them from raw job text is genuinely separate, not-yet-built work
+    (see ingest.py's own module docstring).
+  - No personalized match_score anywhere - that's the deferred paid-
+    tier ML/matching feature (LangChain/LangGraph + BM25/dense hybrid
+    retrieval + Cohere reranker, phased - see project memory), to be
+    computed live per user once built, never stored on the shared
+    `jobs` table.
+  - No admin-role concept, so POST /refresh is reachable by anyone
+    with the URL, not gated to Aman specifically - see that endpoint's
+    own docstring below.
 
 RUN IT:
     uvicorn api:app --reload
 Then open http://127.0.0.1:8000/docs in a browser — FastAPI
 auto-generates an interactive page there where you can try any
 endpoint with one click, no curl/Postman/frontend needed.
-
-`--reload` restarts the server automatically whenever you save a
-change to any of these files — convenient while developing, but drop
-it for any real/production run. ONE IMPORTANT CONSEQUENCE OF --reload
-SPECIFICALLY WITH THIS NEW CACHE: every reload starts a BRAND NEW
-Python process, and _cached_jobs below is just a plain variable living
-in that process's memory - a reload WIPES the cache (back to
-"nobody's refreshed yet"), the same way restarting the server does.
-This is expected, not a bug - if you edit a file and the server
-reloads, you'll need to call /refresh again before /jobs has anything
-to show.
 """
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
+from auth import get_current_user
 from auth_routes import router as auth_router
-from main import MIN_SCORE, fetch_and_score_all
-from job_dates import parse_posted_datetime
+from db import get_db
+from ingest import ingest_relevant_jobs
+from models import Job, JobStatus, User, UserJob
+from scoring import REFRESH_WINDOW_HOURS
 
 app = FastAPI(
     title="jobwatch API",
@@ -160,65 +152,54 @@ app.add_middleware(
 )
 
 
-class JobMatch(BaseModel):
+class JobOut(BaseModel):
     """
-    The shape of ONE job in every endpoint's JSON response below.
+    The shape of ONE job in every jobs-listing endpoint below.
 
-    Field names here are "snake_case" (words_separated_by_underscores)
-    on purpose, matching the style used everywhere else in this
-    codebase (company_name, job_id, etc. in fetchers.py) — the API's
-    JSON keys will come out exactly as written here: company_name,
-    job_id, job_title, job_link, match_score, match_reason,
-    is_strong_match, job_posted_date.
+    tech_stack and years_experience_required are REAL fields in the
+    response contract already, even though nothing populates them yet
+    (job_skills is never written to, Job.yoe is always NULL right now
+    - see ingest.py's own module docstring for why that extraction is
+    genuinely separate, not-yet-built work). Shipping the field now,
+    always empty/null until that's built, means the frontend can start
+    being written against this exact shape today without a second
+    breaking contract change later once extraction exists.
 
-    A NOTE ON job_posted_date SPECIFICALLY: every platform gives us
-    posted-date info in a DIFFERENT raw format (see fetchers.py's
-    module docstring for the common job shape every fetch_* function
-    produces, and _normalize_posted_date() below for exactly how each
-    one is handled) — this field is the NORMALIZED result of that,
-    always in the fixed style "27 Aug, 11pm" when we know both the
-    date and the time, or just "27 Aug" when the source platform only
-    ever gives us a date with no time-of-day (Workday, Amazon — see
-    _normalize_posted_date()'s docstring for why). It's typed
-    `str | None` (rather than a real date/datetime) because DE Shaw's
-    data has no posted-date information at all — `| None` here means
-    "either some text, or the Python value None (meaning 'no value at
-    all')," which is what tells Pydantic/FastAPI this field is allowed
-    to be missing for DE Shaw jobs specifically, instead of erroring.
+    `status` is None specifically when the current user has never
+    acted on this job (no matching user_jobs row) - a real, normal
+    state, not an error - see UserJob's own docstring in models.py for
+    why a row only ever gets created on an actual user action.
     """
-    company_name: str
     job_id: str
-    job_title: str
-    job_link: str
-    match_score: int
-    match_reason: str
-    is_strong_match: bool
-    job_posted_date: str | None
+    title: str
+    company_name: str
+    location: str | None
+    link: str
+    tech_stack: list[str] = []
+    years_experience_required: int | None
+    posted_at: str | None
+    status: str | None
 
 
-class JobsResponse(BaseModel):
-    """
-    The shape POST /refresh, GET /jobs, and GET /jobs/best_match all
-    return - matches Aman's own specified cache structure ({updatedAt,
-    jobs}) directly, just spelled `updated_at` (snake_case) for
-    consistency with every other field name in this API.
-
-    updated_at is None specifically when /refresh has never been
-    called since this server process started (see this file's module
-    docstring for why a --reload restart resets this) - `datetime |
-    None` tells Pydantic/FastAPI that's a valid, expected state, not
-    an error.
-    """
-    updated_at: datetime | None
-    jobs: list[JobMatch]
+class JobsListResponse(BaseModel):
+    jobs: list[JobOut]
 
 
-# The score at and above which scoring.py's own _build_reason()
-# function (see scoring.py) already labels a match "Strong match" in
-# its match_reason text. Reusing that exact number here rather than
-# inventing a second, different threshold that could end up disagreeing
-# with the wording already inside match_reason for the same job.
-STRONG_MATCH_THRESHOLD = 55
+class SetStatusRequest(BaseModel):
+    status: JobStatus
+
+
+class RefreshSummary(BaseModel):
+    """What POST /refresh returns - counts, not the jobs themselves.
+    Callers that want the actual jobs call GET /jobs separately, which
+    is also where per-user status gets attached - a bare fetch/ingest
+    pass has no concept of "which user" to attach status for."""
+    all_jobs_count: int
+    relevant_jobs_count: int
+    inserted: int
+    updated: int
+    skipped_unknown_company: int
+
 
 # India Standard Time is a fixed +5:30 offset from UTC year-round (it
 # never observes daylight saving), so building one directly like this
@@ -231,142 +212,158 @@ STRONG_MATCH_THRESHOLD = 55
 # not in UTC.
 _IST = timezone(timedelta(hours=5, minutes=30))
 
-# THE CACHE. A plain module-level dict - Python's simplest possible
-# form of "state that outlives a single function call" (see state.py's
-# own module docstring for the same "a plain file/variable is
-# genuinely fine for one person's use, not a shortcut to feel bad
-# about" reasoning, applied here to memory instead of disk). Holds
-# whatever POST /refresh below most recently found; GET /jobs and GET
-# /jobs/best_match only ever READ this, never trigger a fetch
-# themselves. Starts empty - "nobody's refreshed since this server
-# started" is a normal, valid state, not an error condition.
-_cached_jobs = {
-    "updated_at": None,   # a real Python datetime once set, or None
-    "jobs": [],            # list of the internal job dicts fetch_and_score_all() returns
-}
 
-
-def _normalize_posted_date(job: dict) -> str | None:
+def _format_posted_at(dt: datetime | None, platform) -> str | None:
     """
-    Turns a job's raw "updated_at" field into one consistent, human-
-    readable string in the style "27 Aug, 11pm" - or, when the source
-    platform only ever gives a date with no time-of-day (Workday,
-    Amazon), just "27 Aug" with no time part rather than making up a
-    fake one. Returns None when there's no date information whatsoever
-    (DE Shaw).
-
-    Uses parse_posted_datetime() (job_dates.py) to do the actual
-    per-platform parsing - the SAME function scoring.py's
-    is_recently_posted() 24-hour filter uses - rather than this file
-    keeping its own second copy of "how do I read a Workday postedOn
-    label." This function's only remaining job is FORMATTING an
-    already-parsed datetime for display, not parsing it in the first
-    place.
+    Turns a Job row's real `posted_at` column (already a proper
+    Python datetime - job_dates.py's parse_posted_datetime() did the
+    actual per-platform parsing back when ingest.py stored this row,
+    not here) into a consistent, human-readable string in the style
+    "27 Aug, 11pm" - or, when the source platform only ever gives a
+    date with no real time-of-day (Workday, Amazon - see
+    parse_posted_datetime()'s own docstring for why), just "27 Aug"
+    with no time part rather than showing a fake one. Returns None
+    when there's no date at all (DE Shaw).
     """
-    dt = parse_posted_datetime(job)
     if dt is None:
         return None
 
-    if job["platform"] in ("workday", "amazon"):
-        # Both of these only ever produce an APPROXIMATE datetime with
-        # no real time-of-day (see parse_posted_datetime()'s own
-        # docstring for why) - showing a hyper-specific-looking time
-        # for either would be showing false precision, so these two
-        # get a date-only result instead.
+    if str(platform) in ("Platform.workday", "workday", "Platform.amazon", "amazon"):
         return f"{dt.day} {dt.strftime('%b')}"
 
-    # Every other platform (Greenhouse, Lever, Ashby, SmartRecruiters,
-    # pcsx) gives a genuine timestamp with a real time. Shift to IST
-    # before formatting, so the hour shown is the hour Aman would
-    # actually see on his own clock right now.
     dt_ist = dt.astimezone(_IST)
-
-    # dt_ist.hour is 0-23 (24-hour clock). Converting to a 12-hour
-    # clock: "% 12" wraps 13->1, 14->2, ..., 23->11, but ALSO wraps
-    # 12->0 - which is wrong (12pm should stay "12", not become "0").
-    # "or 12" fixes exactly that one case: if the "% 12" result is 0
-    # (falsy in Python), use 12 instead.
     hour_12 = dt_ist.hour % 12 or 12
     am_pm = "am" if dt_ist.hour < 12 else "pm"
     return f"{dt_ist.day} {dt_ist.strftime('%b')}, {hour_12}{am_pm}"
 
 
-def _to_job_match(job: dict) -> JobMatch:
-    """
-    Converts one of our internal job dicts — the common shape every
-    fetch_* function in fetchers.py produces, then scoring.py adds
-    match_score/match_reason to (see fetchers.py's module docstring
-    for the full shape) — into the JobMatch shape every endpoint below
-    promises its callers. Keeping this translation in one small
-    function, in one place, means the internal job-dict shape can keep
-    evolving (new fields, renamed fields) without every endpoint
-    needing to change — only this one function would.
-    """
-    return JobMatch(
-        company_name=job["source_company"],
-        job_id=job["job_id"],
-        job_title=job["title"],
-        job_link=job["url"],
-        match_score=job["match_score"],
-        match_reason=job["match_reason"],
-        is_strong_match=job["match_score"] >= STRONG_MATCH_THRESHOLD,
-        job_posted_date=_normalize_posted_date(job),
+def _to_job_out(job: Job, status: JobStatus | None) -> JobOut:
+    """Shared by every jobs-listing endpoint below - one place that turns a Job row (plus this specific user's status, if any) into the response shape, so the four endpoints below can't quietly drift into returning different shapes for the same underlying data."""
+    return JobOut(
+        job_id=str(job.id),
+        title=job.title,
+        company_name=job.company.name,
+        location=job.location,
+        link=job.link,
+        tech_stack=[],  # not built yet - see ingest.py's module docstring
+        years_experience_required=job.yoe,
+        posted_at=_format_posted_at(job.posted_at, job.company.platform),
+        status=status.value if status else None,
     )
 
 
-@app.post("/refresh", response_model=JobsResponse)
+def _user_statuses_by_job_id(db: Session, user: User) -> dict:
+    """One query for ALL of this user's user_jobs rows, turned into a {job_id: status} lookup - used by GET /jobs so attaching status to N jobs costs one query total, not one query per job."""
+    rows = db.query(UserJob).filter(UserJob.user_id == user.id).all()
+    return {row.job_id: row.status for row in rows}
+
+
+@app.post("/refresh", response_model=RefreshSummary)
 def refresh_jobs():
     """
     THE ONLY ENDPOINT THAT ACTUALLY FETCHES ANYTHING. Runs the full
     live pipeline right now - every company, filtered to jobs posted
-    in the last 24 hours (is_recently_posted() in scoring.py) AND
-    India-based AND Software-Engineer-shaped, all scored - and REPLACES
-    the stored cache with the result (see _cached_jobs above). GET
-    /jobs and GET /jobs/best_match serve whatever this call left behind
-    until the next POST /refresh.
+    in the last 24 hours AND India-based AND Software-Engineer-shaped
+    (see ingest.py) - and UPSERTS each one into the real `jobs`
+    database table (see models.py). No longer an in-memory cache (see
+    PROJECT_LOG.md for the 2026-09-02 database migration) - every job
+    stored here is now real, shared, and visible to every user via
+    GET /jobs below, not just held in this one server process's memory.
 
-    POST, not GET, because this has a real side effect (replacing
-    server-side state) and can take a few minutes - the same "this can
-    take a while" reality every live fetch in this project has always
-    had, just now scoped to one explicit, deliberately-triggered
-    action instead of happening on every single read.
+    DELIBERATELY STILL UNAUTHENTICATED, same as before - this is meant
+    to stay a shared/global action (see project cost-planning notes:
+    keeping this un-spammable by individual users is what keeps the
+    Lambda free-tier math workable), not something wired to a specific
+    logged-in user. KNOWN OPEN GAP: with no admin-role concept built
+    yet, this endpoint is currently reachable by literally anyone with
+    the URL, not just Aman - genuinely worth locking down (an admin
+    check, or moving the trigger to a scheduled job instead of a public
+    endpoint) before this matters for real, but not solved here.
     """
-    results = fetch_and_score_all()
-    _cached_jobs["updated_at"] = datetime.now(timezone.utc)
-    _cached_jobs["jobs"] = results["relevant_jobs"]
-    return JobsResponse(
-        updated_at=_cached_jobs["updated_at"],
-        jobs=[_to_job_match(job) for job in _cached_jobs["jobs"]],
+    result = ingest_relevant_jobs()
+    return RefreshSummary(**result)
+
+
+@app.get("/jobs", response_model=JobsListResponse)
+def get_all_jobs(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """
+    "All Jobs" tab - every job posted within the last 24 hours (or
+    with an unknown post time - see ingest.py/is_recently_posted's own
+    "unknown age passes the filter" reasoning, same idea applied here:
+    a job with no posted_at at all, like DE Shaw's, still shows rather
+    than silently vanishing), with THIS user's own status attached
+    where one exists.
+
+    Time-filtered HERE, at read time, rather than relying on
+    POST /refresh to delete stale rows - this is deliberate: a row
+    that ages out of this 24-hour window doesn't get deleted, it just
+    stops showing up here, while still being fully intact for
+    GET /jobs/mine or GET /jobs/saved below (neither of which apply
+    any time filter at all) if the user already saved or applied to it.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=REFRESH_WINDOW_HOURS)
+    jobs = db.query(Job).filter((Job.posted_at >= cutoff) | (Job.posted_at.is_(None))).all()
+    statuses = _user_statuses_by_job_id(db, user)
+    return JobsListResponse(jobs=[_to_job_out(j, statuses.get(j.id)) for j in jobs])
+
+
+@app.get("/jobs/mine", response_model=JobsListResponse)
+def get_my_jobs(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """"My Jobs" tab - every job this user has marked Applied. No time filter - stays visible long after the posting itself ages out of "All Jobs", exactly as specified: saved/applied jobs persist "until the user himself decides to remove them"."""
+    jobs = (
+        db.query(Job)
+        .join(UserJob, UserJob.job_id == Job.id)
+        .filter(UserJob.user_id == user.id, UserJob.status == JobStatus.applied)
+        .all()
     )
+    return JobsListResponse(jobs=[_to_job_out(j, JobStatus.applied) for j in jobs])
 
 
-@app.get("/jobs", response_model=JobsResponse)
-def get_all_relevant_jobs():
-    """
-    Returns whatever POST /refresh most recently found — every
-    relevant job at any match score. Does NOT trigger a new fetch;
-    near-instant, safe to call as often as you want. If /refresh has
-    never been called since this server started, returns
-    `{"updated_at": null, "jobs": []}` rather than erroring.
-    """
-    return JobsResponse(
-        updated_at=_cached_jobs["updated_at"],
-        jobs=[_to_job_match(job) for job in _cached_jobs["jobs"]],
+@app.get("/jobs/saved", response_model=JobsListResponse)
+def get_saved_jobs(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """"Saved Jobs" tab - same idea as GET /jobs/mine above, filtered to status == saved instead of applied."""
+    jobs = (
+        db.query(Job)
+        .join(UserJob, UserJob.job_id == Job.id)
+        .filter(UserJob.user_id == user.id, UserJob.status == JobStatus.saved)
+        .all()
     )
+    return JobsListResponse(jobs=[_to_job_out(j, JobStatus.saved) for j in jobs])
 
 
-@app.get("/jobs/best_match", response_model=JobsResponse)
-def get_best_match_jobs():
+@app.post("/jobs/{job_id}/status")
+def set_job_status(
+    job_id: str,
+    payload: SetStatusRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """
-    Same stored data as GET /jobs above, narrowed down to only jobs
-    scoring >= MIN_SCORE (Aman's stated bar, currently 50 - see
-    MIN_SCORE in main.py). Also reads from the cache only - no new
-    fetch, safe to call repeatedly.
+    Sets (or changes) the current user's status on one job - saved,
+    applied, or not_interested. A single status field, not independent
+    flags (see UserJob's own docstring in models.py) - marking a job
+    Applied after it was Saved simply overwrites the Saved status,
+    it doesn't keep both true at once.
+
+    UPSERT: creates a new user_jobs row if this user has never acted
+    on this job before, or updates the existing one in place if they
+    have - either way there's still only ever at most one status per
+    (user, job) pair.
     """
-    qualifying_jobs = [j for j in _cached_jobs["jobs"] if j["match_score"] >= MIN_SCORE]
-    return JobsResponse(
-        updated_at=_cached_jobs["updated_at"],
-        jobs=[_to_job_match(job) for job in qualifying_jobs],
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    existing = (
+        db.query(UserJob)
+        .filter(UserJob.user_id == user.id, UserJob.job_id == job_id)
+        .first()
     )
+    if existing is not None:
+        existing.status = payload.status
+    else:
+        db.add(UserJob(user_id=user.id, job_id=job_id, status=payload.status))
+    db.commit()
+    return {"job_id": job_id, "status": payload.status.value}
 
 

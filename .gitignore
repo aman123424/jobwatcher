@@ -8,3 +8,6 @@ __pycache__/
 # Runtime state written by the app while it runs - not source code
 matches_log.csv
 seen_jobs.json
+
+# Real secrets - only .env.example (with placeholder values) is committed
+.env

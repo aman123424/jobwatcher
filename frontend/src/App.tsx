@@ -1,53 +1,45 @@
 import "./App.css";
-import { JobList } from "./components/JobList";
-import { RefreshBar } from "./components/RefreshBar";
-import { ViewToggle } from "./components/ViewToggle";
-import { useJobsData } from "./hooks/useJobsData";
+import { Navigate, Route, BrowserRouter as Router, Routes } from "react-router-dom";
+import { ProtectedRoute } from "./components/ProtectedRoute";
+import { AuthProvider } from "./hooks/useAuth";
+import { HomePage } from "./pages/HomePage";
+import { JobsPage } from "./pages/JobsPage";
+import { LoginPage } from "./pages/LoginPage";
+import { RegisterPage } from "./pages/RegisterPage";
 
 /**
- * Pure composition - every actual behavior (fetching, state, view
- * switching) lives in useJobsData; every actual rendering decision
- * (loading/error/empty states, one job's layout) lives in the
- * components below. This file's only job is wiring the two together,
- * which is what keeps it readable even as the app grows.
+ * Pure composition, same principle the old single-page version of
+ * this file followed - AuthProvider owns login state, each page owns
+ * its own rendering, this file just wires routes to pages.
  */
 function App() {
-  const {
-    view,
-    setView,
-    jobs,
-    updatedAt,
-    isLoadingView,
-    isRefreshing,
-    error,
-    refresh,
-  } = useJobsData();
-
   return (
-    <div className="app">
-      <header className="app-header">
-        <h1>JobWatcher</h1>
-        <p className="app-subtitle">
-          Fresh Software Engineer postings, scored against your resume.
-        </p>
-      </header>
-
-      <RefreshBar
-        updatedAt={updatedAt}
-        isRefreshing={isRefreshing}
-        onRefresh={refresh}
-      />
-      <ViewToggle view={view} onChange={setView} />
-
-      <main>
-        <JobList
-          jobs={jobs}
-          isLoading={isLoadingView}
-          error={error}
-          hasEverRefreshed={updatedAt !== null}
-        />
-      </main>
-    </div>
+    <AuthProvider>
+      <Router>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
+          <Route
+            path="/"
+            element={
+              <ProtectedRoute>
+                <HomePage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/app"
+            element={
+              <ProtectedRoute>
+                <JobsPage />
+              </ProtectedRoute>
+            }
+          />
+          {/* Anything unrecognized falls back to home (which itself redirects to /login if not authenticated). */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Router>
+    </AuthProvider>
   );
 }
 

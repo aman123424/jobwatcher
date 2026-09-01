@@ -1,55 +1,211 @@
-.app {
-  width: 100%;
-  max-width: 900px;
-  margin: 0 auto;
-  padding: 0 24px 48px;
-  text-align: left;
+/* --- Shared auth page (login/register) --- */
+
+.auth-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100svh;
+  padding: 24px;
   box-sizing: border-box;
 }
 
-.app-subtitle {
-  color: var(--text);
-  margin-bottom: 24px;
-}
-
-/* --- Refresh bar --- */
-
-.refresh-bar {
+.auth-form {
+  width: 100%;
+  max-width: 380px;
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 16px;
-  flex-wrap: wrap;
-  margin-bottom: 16px;
+  text-align: left;
 }
 
-.refresh-button {
+.auth-form h1 {
+  margin: 0;
+  font-size: 32px;
+}
+
+.auth-subtitle {
+  color: var(--text);
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.auth-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--text-h);
+}
+
+.auth-form input {
+  font: inherit;
+  font-size: 16px;
+  color: var(--text-h);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.auth-form input:focus {
+  outline: none;
+  border-color: var(--accent-border);
+}
+
+.auth-form button[type="submit"] {
   font: inherit;
   font-weight: 600;
+  font-size: 16px;
   color: #fff;
   background: var(--accent);
   border: none;
   border-radius: 8px;
-  padding: 10px 20px;
+  padding: 12px;
+  margin-top: 8px;
   cursor: pointer;
 }
 
-.refresh-button:disabled {
+.auth-form button[type="submit"]:disabled {
   opacity: 0.6;
   cursor: wait;
 }
 
-.refresh-button:not(:disabled):hover {
+.auth-form button[type="submit"]:not(:disabled):hover {
   filter: brightness(1.08);
 }
 
-.updated-at {
+.auth-error {
+  color: #e5484d;
+  font-size: 14px;
+  margin: 0;
+}
+
+.auth-switch {
+  text-align: center;
+  font-size: 14px;
+  color: var(--text);
+  margin: 8px 0 0;
+}
+
+.auth-switch a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.auth-switch a:hover {
+  text-decoration: underline;
+}
+
+/* --- Home page --- */
+
+.home-page {
+  width: 100%;
+  max-width: 700px;
+  margin: 0 auto;
+  padding: 32px 24px;
+  box-sizing: border-box;
+  text-align: left;
+}
+
+.home-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.home-header h1 {
+  margin: 0;
+}
+
+.logout-button {
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+.logout-button:hover {
+  color: var(--text-h);
+}
+
+.home-greeting {
+  font-size: 18px;
+  color: var(--text-h);
+  margin: 24px 0 4px;
+}
+
+.home-subtitle {
+  color: var(--text);
+  margin: 0 0 32px;
+}
+
+.get-started-button {
+  font: inherit;
+  font-weight: 600;
+  font-size: 16px;
+  color: #fff;
+  background: var(--accent);
+  border: none;
+  border-radius: 8px;
+  padding: 14px 28px;
+  cursor: pointer;
+}
+
+.get-started-button:hover {
+  filter: brightness(1.08);
+}
+
+/* --- Jobs page --- */
+
+.jobs-page {
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px 24px 48px;
+  box-sizing: border-box;
+  text-align: left;
+}
+
+.jobs-page-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.jobs-page-header h1 {
+  margin: 0;
+  font-size: 24px;
+  flex: 1;
+}
+
+.back-button {
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+.back-button:hover {
+  color: var(--text-h);
+}
+
+.jobs-page-user {
   color: var(--text);
   font-size: 14px;
 }
 
-/* --- View toggle --- */
+/* --- Tabs --- */
 
-.view-toggle {
+.jobs-tabs {
   display: flex;
   gap: 4px;
   border: 1px solid var(--border);
@@ -59,7 +215,7 @@
   margin-bottom: 24px;
 }
 
-.view-toggle-button {
+.jobs-tab-button {
   font: inherit;
   font-size: 14px;
   color: var(--text);
@@ -70,12 +226,12 @@
   cursor: pointer;
 }
 
-.view-toggle-button.active {
+.jobs-tab-button.active {
   color: var(--text-h);
   background: var(--accent-bg);
 }
 
-/* --- Job list / status states --- */
+/* --- Job list / status --- */
 
 .job-list-status {
   color: var(--text);
@@ -98,11 +254,6 @@
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 16px 20px;
-}
-
-.job-card.strong-match {
-  border-color: var(--accent-border);
-  background: var(--accent-bg);
 }
 
 .job-card-header {
@@ -129,26 +280,63 @@
 .job-company {
   color: var(--text);
   font-size: 14px;
+  margin: 0;
 }
 
-.job-score {
-  flex-shrink: 0;
+.job-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0;
+}
+
+.job-skill-badge,
+.job-yoe-badge {
   font-family: var(--mono);
-  font-weight: 600;
-  font-size: 14px;
+  font-size: 12px;
   color: var(--text-h);
   background: var(--code-bg);
   border-radius: 999px;
-  padding: 4px 10px;
+  padding: 3px 10px;
 }
 
-.job-reason {
-  font-size: 14px;
-  line-height: 150%;
-  margin: 10px 0;
+.job-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
 }
 
 .job-posted-date {
   font-size: 13px;
   color: var(--text);
+}
+
+.job-status-buttons {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.job-status-button {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+
+.job-status-button:hover {
+  color: var(--text-h);
+}
+
+.job-status-button.active {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
 }
