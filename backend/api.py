@@ -66,12 +66,23 @@ start), both read endpoints return `{"updated_at": None, "jobs": []}`
 rather than erroring - there's nothing broken about "nobody's
 refreshed yet," it just means there's nothing to show.
 
-WHAT "NO AUTH FOR NOW" MEANS: this API has no login, no API key, no
-access control of any kind — anyone who can reach this server's URL
-can call any endpoint below and see (or trigger a refresh of) your job
-matches. That's a deliberate, temporary choice for local/personal use,
-not an oversight — if this is ever deployed somewhere reachable by
-anyone other than you, add authentication before doing that.
+AUTH (added 2026-09-02): real registration/login now exists - see
+auth_routes.py (POST /auth/register, POST /auth/login, both issuing a
+JWT) and auth.py (password hashing, JWT creation/verification,
+get_current_user). Deliberately NO email-verification gate anywhere
+yet - every new account starts with `email_verified=False` and
+nothing checks that flag before allowing registration, login, or
+(eventually) any other feature - there's no email-sending service
+wired up yet to let anyone actually complete verification, so gating
+on it would just lock everyone out. This is Aman's own explicit call,
+not an oversight - revisit once a real email service exists.
+
+The job-related endpoints below (/refresh, /jobs, /jobs/best_match)
+are STILL fully open, no login required at all - multi-user auth
+exists now at the account level, but nothing has been wired up yet to
+actually scope job data per-user (that's the next piece: `user_jobs`
+already exists in the database - see models.py - for exactly this,
+just not read from or written to by any endpoint yet).
 
 RUN IT:
     uvicorn api:app --reload
@@ -97,6 +108,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from auth_routes import router as auth_router
 from main import MIN_SCORE, fetch_and_score_all
 from job_dates import parse_posted_datetime
 
@@ -104,6 +116,12 @@ app = FastAPI(
     title="jobwatch API",
     description="Returns Software-Engineer job postings scored against Aman's resume.",
 )
+
+# Mounts POST /auth/register and POST /auth/login (see auth_routes.py)
+# - kept in their own file/router rather than defined directly here,
+# since account/auth concerns and job-fetching concerns are genuinely
+# separate things that don't need to grow in the same file forever.
+app.include_router(auth_router)
 
 # CORS ("Cross-Origin Resource Sharing"): by default, a browser blocks
 # a page running on one origin (e.g. the frontend dev server at
