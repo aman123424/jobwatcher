@@ -98,8 +98,13 @@ after it, seven after `job_dates.py` was split out), each with one job:
 | `job_dates.py` | Added 2026-08-29, split out of `fetchers.py` specifically to break a circular import (`scoring.py` needed date-parsing logic that used to live in `fetchers.py`, but `fetchers.py` already imports FROM `scoring.py`). The one shared place that turns each platform's very different raw "posted date" data into a real, comparable Python datetime — used by `fetchers.py` (Workday's early-stop pagination), `scoring.py` (the 24-hour freshness filter), and `api.py` (the human-readable `job_posted_date` display). |
 | `scoring.py` | Evidence-weighted, JD-importance-aware match scoring against Aman's real resume content (rewritten 2026-08-28 - see that section above), 0-100, plus a plain-English reason. Also filters to Software-Engineer-shaped titles, India-only locations, infers rough seniority from the title, and (added 2026-08-29) filters to jobs posted within the last 24 hours (`is_recently_posted()`). |
 | `state.py` | Remembers which jobs have already been shown, across runs, via a JSON file keyed on `(platform, job_id)` — used by the still-present but no-longer-API-exposed `find_new_matches()` in `main.py` (see the `/refresh` architecture section below for why it's no longer wired to an endpoint). |
-| `main.py` | Runs the whole pipeline end to end. Exposes two entry points: `fetch_and_score_all()` (read-only: fetch → filter → score, no side effects) and `find_new_matches()` (built on top of the first: also filters by `MIN_SCORE`, diffs against `state.py`, logs, and saves) — both the CLI's `run()` and `api.py`'s endpoints call these same two functions rather than each having their own copy of the pipeline logic. |
-| `api.py` | FastAPI backend, **rewritten 2026-08-29** around a fetch-once/read-many cache architecture — see the dedicated section below for the full design. `GET /jobs`, `GET /jobs/best_match`, `POST /refresh`. CORS enabled for the frontend's dev-server origin. No auth (deliberate, for local/personal use). |
+| `main.py` | Runs the whole pipeline end to end. Exposes two entry points: `fetch_and_score_all()` (read-only: fetch → filter → score, no side effects) and `find_new_matches()` (built on top of the first: also filters by `MIN_SCORE`, diffs against `state.py`, logs, and saves) — both the CLI's `run()` and `ingest.py` call `fetch_and_score_all`/`fetch_all_jobs` rather than duplicating pipeline logic. `find_new_matches()` itself is unused by anything right now (kept in case it's reused later). |
+| `db.py` | **Added 2026-09-02.** SQLAlchemy engine/session setup (`DATABASE_URL` from `.env` locally, a real Lambda env var in production), plus `get_db()` — the FastAPI dependency every DB-touching endpoint uses to get one fresh session per request. |
+| `models.py` | **Added 2026-09-02.** The full multi-user database schema as SQLAlchemy 2.0 models — `User`, `AuthToken`, `Company`, `Job`, `Skill`, `JobSkill`, `UserSkill`, `UserJob`. See the dedicated "Multi-user architecture" section below for the full design reasoning, especially why `UserJob` (not a `status` column on `Job` itself) is the load-bearing fix that makes this a real multi-user system. |
+| `auth.py` / `auth_routes.py` | **Added 2026-09-02.** Password hashing (bcrypt), JWT create/verify (PyJWT), `get_current_user` dependency, and the two account endpoints (`POST /auth/register`, `POST /auth/login`). Deliberately no email-verification enforcement anywhere (Aman's own call — no email service exists yet). |
+| `seed_companies.py` | **Added 2026-09-02.** One-time, safely-rerunnable script copying `companies.py`'s company list into the real `companies` DB table — rerun this whenever `companies.py` changes. |
+| `ingest.py` | **Added 2026-09-02.** The replacement for the old in-memory `/refresh` pipeline — reuses `fetch_all_jobs()` and scoring.py's resume-independent filters unchanged, but UPSERTS each relevant job straight into the real `jobs` table instead of a Python dict, and no longer calls `score_job()` at all (personalized scoring against one hardcoded resume doesn't make sense once `jobs` is a shared table every user reads from). |
+| `api.py` | FastAPI backend. **Rewritten a third time, 2026-09-02**, on top of the new database — `POST /auth/register`, `POST /auth/login`, `POST /refresh` (still unauthenticated, ingests into the DB), `GET /jobs` / `GET /jobs/mine` / `GET /jobs/saved` (all require login), `POST /jobs/{id}/status`. `GET /jobs/best_match` was removed (depended on the old cache's `match_score`, which no longer exists in this architecture). |
 
 The normalization step in `fetchers.py` is the load-bearing design
 choice — it's what let three completely different pagination/response
@@ -620,6 +625,230 @@ actually working end-to-end and not just configured.
 
 ---
 
+## Deployed to AWS: Lambda + CloudFront + a custom domain (2026-08-30/31)
+
+Deliberately chosen for the AWS experience itself (a resume/interview
+asset for the SWE roles Aman is applying to), not because it was the
+technically easiest path - Fly.io/Vercel would have been simpler and
+cheaper long-term, and that tradeoff was made consciously, not
+accidentally.
+
+**Frontend**: S3 (private bucket, `Block all public access` on) +
+CloudFront reading it via Origin Access Control - the modern,
+private-bucket pattern, not the older "public bucket" approach.
+**Backend**: Lambda, via a **Function URL**, deliberately NOT API
+Gateway - API Gateway's REST API type enforces a hard 29-second
+timeout that can't be raised, and `POST /refresh` is a real ~10-60s
+live fetch across every company; a Function URL is bound only by
+Lambda's own configurable timeout instead. `Mangum` adapts `api.py`'s
+unmodified FastAPI `app` to Lambda's event/response shape - see
+`lambda_handler.py`.
+
+**Packaging, the hard part**: built on Windows, deployed to Linux -
+`pip install --platform manylinux2014_x86_64 --only-binary=:all:
+--python-version 3.12 --implementation cp --target ./package` forces
+pip to download Linux-compatible wheels instead of the Windows ones a
+plain `pip install` would grab, which matters specifically for
+compiled dependencies (`pydantic-core`, later `psycopg2-binary`,
+`bcrypt`) that would otherwise silently fail on Lambda's runtime.
+Zipped via Python's own `zipfile` module (no `zip` binary available in
+this environment) rather than a shell command.
+
+**A real security incident during this work, worth remembering**: an
+early Lambda region field defaulted to US East (Virginia) during S3
+bucket creation - caught and fixed before creating anything (see
+Challenges below for the CloudFront region gotcha that's related but
+different). Separately, once Lambda was live, `POST /refresh` was
+timed at **13.5s** after Qualcomm was removed from `companies.py`
+(previously ~45s of the run) - confirms the earlier Qualcomm-removal
+decision paid off in production, not just locally.
+
+**Custom domain**: `mykave.in` bought from Spaceship (a third-party
+registrar, not Route 53 - avoids Route 53's extra $0.50/month hosted-
+zone fee). ACM certificate for `jobwatcher.mykave.in` had to be
+requested specifically in **us-east-1**, regardless of every other
+resource living in ap-south-1 - a genuine, easy-to-miss CloudFront
+requirement, not a mistake in this project's own setup. DNS validation
+CNAME added at Spaceship, then the domain + certificate attached to
+the CloudFront distribution's "Domains and certificate" section
+(a newer CloudFront console UI than older tutorials describe), with
+the security policy manually corrected from the default plain "TLSv1"
+(deprecated) to "TLSv1.2_2021 (recommended)". Verified live end-to-end
+on `https://jobwatcher.mykave.in` before considering this done.
+
+## Scoring bug fixes, found from a real user complaint (2026-08-31)
+
+Aman reported three things looked wrong after using the live app:
+a Rubrik posting scoring 67 ("Strong match") that a separate LLM
+comparison judged 5-10%; two Barclays postings that seemed like real
+matches scoring lower than expected; and every single Amazon job
+scoring ~0 regardless of title. All three were real, confirmed bugs -
+not guessed at, each traced to a specific line before being fixed:
+
+1. **HTML entities were never decoded before keyword matching.**
+   `_strip_html()` only stripped literal `<tag>` patterns - a Barclays
+   posting spelled "C++" as `C&#43;&#43;` (the numeric HTML entity for
+   "+"), so the literal substring "c++" never appeared anywhere in the
+   text the scorer searched, making the posting's single most
+   important Required skill invisible to matching. Separately, a
+   Rubrik posting's OWN tags were entity-encoded a level deep
+   (`&lt;p&gt;` instead of `<p>`), so `_strip_html()`'s tag-stripping
+   regex never even fired on any of it. Fixed with `html.unescape()`
+   BEFORE the tag-strip regex, in one place, fixing both symptoms at once.
+2. **`RESUME_SKILLS` had `"c#"` and `".net"` as two separate 5-weight
+   keywords pointing at the exact same real-world evidence.** Since
+   job postings almost always write "C#/.NET" together, any such
+   posting got credited TWICE - confirmed as the direct cause of the
+   Rubrik posting's inflated 67: its ONLY real overlap was a minor
+   "Nice-to-have" C#/.NET mention, doubled into looking like a strong
+   match. Fixed by merging into one `"c#/.net"` key with an
+   alternate-spellings match list (`_KEYWORD_ALTERNATE_SPELLINGS`) -
+   still matches either spelling alone, just doesn't double-count when
+   both appear in the same posting.
+3. **`fetch_amazon` built `raw_description` as `description_short or
+   description`** - `description_short` (a ~200-char marketing
+   teaser) is never empty, so the real ~6,000-char `description`
+   field was NEVER used, for any Amazon job, ever. Every Amazon
+   posting was being scored against intro fluff with zero real
+   requirements text in it. Fixed by using `description` plus Amazon's
+   own separate `basic_qualifications`/`preferred_qualifications`
+   fields (prefixed with literal "Required Qualifications:"/"Preferred
+   Qualifications:" text so `scoring.py`'s existing JD-importance
+   section detection picks them up correctly, the same way it already
+   does for every other platform's real Required/Preferred sections).
+
+All three verified with real before/after job data (Rubrik dropped
+67→33, Barclays' "Developer" C++ now correctly detected, Amazon's real
+score distribution now spreads realistically 0-87 instead of
+uniformly ~0) before being redeployed to Lambda. The Barclays "Full
+Stack Developer" case investigated in the same pass turned out NOT to
+be a bug - it requires Java/Spring, which Aman confirmed he has no
+real experience in, so a low score there is honest, not broken; this
+is the same underlying gap as the still-open Schrödinger
+missing-required-skill item below, not a new one.
+
+## Multi-user architecture: real database + auth (2026-09-01/02)
+
+The biggest architectural shift in the project so far - jobwatcher
+went from "a personal tool with a login bolted on" to a genuine
+multi-user system with its own database, in one extended session.
+
+**Database schema, designed collaboratively with Aman** (his own
+initial draft, refined together - see the conversation for the full
+back-and-forth): `users`, `auth_tokens` (shared table for email-verify
+AND password-reset tokens - NOT JWTs; a JWT is the separate, stateless
+session/access-token layer issued at login and never stored in the
+database at all, while `auth_tokens` exists specifically because a
+verification/reset link gets emailed out and clicked LATER, so the
+server needs real persisted state to check it against), `companies`
+(gained a `slug` column - the platform-specific fetch identifier,
+moved out of the static `companies.py` file into the DB - and
+`is_priority_company`, distinguishing the current 47 hand-picked
+companies from the much larger resolved-slug pool for whenever the
+Lambda-architecture batch-layer split happens), `jobs` (the shared,
+resume-independent pool every user reads from), `skills` (a canonical
+skill-name dictionary), `job_skills` / `user_skills` (junction tables -
+a job's required skills carry an `importance` of required/preferred;
+a user's own skills carry a `proficiency` 1-10 - deliberately two
+separate columns on two separate tables rather than one shared field
+trying to mean both a job's requirement strength AND a person's skill
+level at once), and **`UserJob`** - the load-bearing fix. Aman's own
+first draft had `status` living directly on `Job` itself, which would
+mean one job could only ever have ONE status, shared and overwritten
+by whichever user touched it last - completely wrong for a multi-user
+system. `UserJob` is a separate table, one row per (user, job) pair,
+created ONLY once a user actually acts on a job (not pre-populated for
+every job × every user, which would explode for no benefit) - a job
+with no row for a given user is implicitly "new/unseen" to them.
+
+**Stack**: SQLAlchemy 2.0 + Alembic, against Supabase Postgres
+(**Session pooler**, not the generally-recommended Transaction pooler -
+Transaction pooler defaults to IPv6-only, and the Lambda backend has
+no VPC attached so it's IPv4-only outbound; Session pooler is "IPv4
+proxied for free"). `alembic.ini`'s `sqlalchemy.url` deliberately left
+blank (it's a committed file) - `alembic/env.py` reads the real
+connection string from `DATABASE_URL` at runtime instead, with a
+`.replace("%", "%%")` escape specifically needed because `configparser`
+(what Alembic's Config is built on) treats "%" as its own special
+interpolation character and chokes on a percent-encoded password
+otherwise. One clean migration generated and applied - all 8 tables
+verified live in Supabase via a direct query, not just a successful
+migration run.
+
+**Auth**: `POST /auth/register` / `POST /auth/login`, bcrypt password
+hashing, JWT (HS256, single 7-day access token, no refresh-token
+flow - a deliberate v1 simplification). **No email-verification gate
+anywhere, deliberately** - Aman's own explicit call: every account
+starts with `email_verified=False` and stays that way, since no email
+service exists yet to let anyone actually complete verification;
+gating on it would just lock everyone out. Revisit once a real email
+service (likely SES) exists. Also deliberately **no resume upload at
+registration** - keeps signup lightweight for every user, since resume
+upload is a paid-tier-only concern that should be asked for later,
+contextually, when a user actually engages with that feature, not
+upfront for free-tier users who may never need it.
+
+**Jobs moved from an in-memory cache to the real database**: `POST
+/refresh` now UPSERTS into the real `jobs` table (`ingest.py`) instead
+of holding a Python dict - reuses `fetch_all_jobs()` and scoring.py's
+resume-independent filters (`is_relevant_title`/`is_india_location`/
+`is_recently_posted`) completely unchanged, but no longer calls
+`score_job()` at all, since personalized scoring against one hardcoded
+resume doesn't make sense once `jobs` is a table every user shares.
+`GET /jobs` ("All Jobs") applies its 24-hour time filter at READ time,
+not by deleting stale rows - a job that ages out just stops appearing
+there while staying fully intact for `GET /jobs/mine` / `GET
+/jobs/saved` (neither of which apply any time filter at all), exactly
+matching Aman's own spec that saved/applied jobs "stay in the database
+for a longer time (until the user himself decides to remove them)."
+`POST /jobs/{id}/status` upserts a single status field - marking
+Applied after Saved simply overwrites, doesn't keep both true at once,
+confirmed live through the real UI (not just the API): clicking
+"Applied" instantly moved a job into "My Jobs" with no page reload,
+then clicking "Not interested" on the same job instantly removed it
+again. `GET /jobs/best_match` was removed entirely (depended on the
+old cache's `match_score`).
+
+**`tech_stack` and `years_experience_required` are real fields in
+every job response already**, but always empty/null right now -
+extracting them from raw job text in a resume-INDEPENDENT way is
+genuinely separate, not-yet-built work, flagged clearly in code
+(`ingest.py`'s own module docstring) rather than faked.
+
+**Frontend rebuilt to match**: the old job-listing components
+(`RefreshBar`, `ViewToggle`, `JobCard`, `JobList`, `useJobsData`) were
+deleted entirely rather than left as dead code, since they were built
+against the now-dead `match_score` API shape. New: `react-router-dom`
+for real routing (`/login`, `/register`, `/` (Home), `/app` (the real
+Jobs page)), `useAuth` (React Context - login/register/logout, JWT
+persisted to `localStorage`, survives a page reload), `useJobs`
+(tab state - All/My/Saved - + fetch + status updates, with automatic
+logout on a 401 via a new `UnauthorizedError` class). **Deliberately
+no "Fetch Fresh" button anywhere in the UI** - `POST /refresh` stays a
+shared, unauthenticated, admin/scheduled action per the earlier
+Lambda-cost-staying-free reasoning, so the frontend only ever reads.
+Verified live end-to-end with real Supabase data: register → Jobs page
+→ real jobs rendered → "Applied" instantly reflected in "My Jobs" with
+no reload → overwriting to "Not interested" instantly removed it again.
+
+**Redeployed to Lambda and CloudFront** with all of the above - see
+Challenges below for a real packaging bug hit during this specific
+redeploy (`ImportModuleError` from stripped package metadata).
+Verified live in production, not just locally: registered a real
+account against the deployed Lambda URL, confirmed `GET /jobs` and
+`POST /jobs/{id}/status` both work against the real Supabase database
+in production.
+
+**Branding**: page title changed to "JobWatcher", and a custom
+favicon - a circular "AK" monogram where the right leg of the A and
+the vertical stroke of the K are the SAME stroke (a real ligature, not
+two letters just placed side by side), matching a hand sketch Aman
+provided. An earlier version added a lightning bolt crossing through
+the mark; removed after Aman's own review - it dominated the design
+and made the monogram unreadable at actual favicon size.
+
+---
+
 ## Challenges faced, and how they were actually solved
 
 Documented in the order they happened, including the wrong turns —
@@ -811,6 +1040,54 @@ reminder of the general practice: a sudden multi-company failure
 pattern is a strong signal to check whether the shared underlying
 platform itself is having a bad day, before assuming a fetcher broke.
 
+### A real database password briefly printed in this chat session
+
+While wiring up Alembic against the real Supabase connection string,
+`config.set_main_option("sqlalchemy.url", db.DATABASE_URL)` raised a
+`ValueError` whose message included the FULL connection string,
+password and all - `configparser` (what Alembic's Config object is
+built on) includes the offending value verbatim in its own error
+message when it can't parse it. The password was reset immediately as
+a precaution, before continuing. The actual underlying bug (why
+`configparser` choked at all) was separate and unrelated to the
+exposure itself: `configparser` treats "%" as its own special
+interpolation character, and a percent-encoded password is MADE of
+"%XX" sequences - fixed by escaping "%" as "%%" specifically when
+passing the value through `config.set_main_option()` (which
+`configparser` correctly un-escapes back to a literal "%" internally,
+so the real connection string used to actually connect is unaffected).
+Worth remembering generally: any code path that can surface a raw
+exception message needs extra care when secrets might be embedded in
+the value being processed - the fix for the exposure (reset the
+credential) and the fix for the bug (escape the value) are two
+separate things, and doing only the second would have left the
+already-exposed password still valid.
+
+### Lambda `ImportModuleError` after adding SQLAlchemy/auth dependencies
+
+Redeploying the backend with the new database/auth dependencies
+(`sqlalchemy`, `psycopg2-binary`, `bcrypt`, `PyJWT`, `pydantic[email]`)
+produced a `502` with `Runtime.ImportModuleError` on every single
+invocation, immediately (0.83s - confirmed via response timing that
+this was a crash, not the 2-minute configured timeout being hit).
+CloudWatch Logs showed the real cause: `"No package metadata was found
+for email-validator"`. Root cause: the Lambda zip-building process
+was deliberately excluding every `*.dist-info` folder to keep the
+package smaller (a reasonable-looking optimization that had worked
+fine for every earlier deploy) - but `email-validator` (a dependency
+of `pydantic[email]`, used for validating email addresses at
+registration) checks its OWN installed package metadata at import
+time via `importlib.metadata`, and stripping its `dist-info` folder
+removed exactly the file it was checking for. Fixed by no longer
+excluding ANY `dist-info` folders when building the zip - the package
+grew from 12.37MB to 12.58MB, negligible, and comfortably under
+Lambda's 50MB console-upload limit either way. General lesson:
+"unused-looking" metadata files inside a dependency aren't always
+safe to strip - some packages genuinely check for their own presence
+at runtime, and there's no way to know which ones without either
+testing live or just not stripping anything, which turned out to
+have been the right call all along here.
+
 ---
 
 ## Engineering practices that emerged from this
@@ -844,16 +1121,12 @@ so far:
 
 ## Next steps / open items
 
-1. **A real replacement for `GET /jobs/new`.** Deliberately removed
-   from the backend (see the `/refresh` architecture section above) on
-   Aman's own instruction that he'll build a workaround for this
-   "without creating a new endpoint" later - not yet designed. Likely
-   candidates once it's picked back up: diffing consecutive `/refresh`
-   results client-side, or persisting a seen-set in the browser
-   (`localStorage`) rather than the backend's old `seen_jobs.json`
-   approach. `find_new_matches()`/`state.py` were left untouched in the
-   backend specifically so they're available to reuse if that ends up
-   being the right shape after all.
+1. ~~A real replacement for `GET /jobs/new`~~ **RESOLVED by the
+   database migration (2026-09-02).** The `user_jobs` table gives
+   "what's new" semantics for free - a job with no `user_jobs` row for
+   a given user is implicitly new/unseen to them, no separate
+   seen-tracking mechanism needed. `find_new_matches()`/`state.py`
+   remain unused, kept only in case they're ever needed again.
 2. **Missing-required-skill penalty in scoring.py.** The Schrödinger
    finding above (85 score built almost entirely from Nice-to-Have
    matches while the #1 Required skill has zero overlap) is real and
@@ -895,10 +1168,48 @@ so far:
    technically possible) is worth the extra engineering effort, given
    they'd need meaningfully different, more fragile approaches than
    everything built so far.
-9. **Frontend polish and deployment.** The frontend is functionally
-   complete and live-verified against a local backend, but has had no
-   real design pass beyond the base dark/light theme inherited from
-   the Vite scaffold, and neither the frontend nor backend has been
-   deployed anywhere outside `localhost` yet - both still assume a
-   same-machine dev setup (hardcoded default `VITE_API_BASE_URL`, CORS
-   allowlist scoped to `localhost:5173` only).
+9. ~~Frontend polish and deployment~~ **RESOLVED (2026-08-31 for the
+   original single-user version, redeployed 2026-09-02 for the
+   multi-user version).** Both frontend and backend are live in
+   production - `https://jobwatcher.mykave.in` (S3 + CloudFront +
+   custom domain), `jobwatcher-backend` on Lambda. Verified end-to-end
+   against the real deployed stack, not just locally.
+10. **Tech stack / years-of-experience extraction.** `tech_stack` and
+    `years_experience_required` are real fields in every job response
+    already, but always empty/null - the resume-independent extraction
+    that would populate `job_skills`/`Job.yoe` from raw job text is
+    genuinely separate, not-yet-built work.
+11. **No admin-role concept, so `POST /refresh` is reachable by
+    anyone with the URL**, not gated to Aman specifically - a known,
+    accepted gap for now (see `api.py`'s own docstring), worth locking
+    down (an admin check, or moving the trigger to a scheduled job
+    instead of a public endpoint) before this matters for real.
+12. **The phased ML/matching architecture** (Aman's own design):
+    final target is LangChain/LangGraph orchestration, BM25 + dense
+    hybrid retrieval, a Cohere reranker, sentence embeddings + cosine
+    similarity combined with requirement-tier feature weighting, and
+    Pandas/NumPy/Scikit-learn feature extraction, evaluated via
+    precision@k against manually-labeled relevance judgments. Phase 1
+    (LangChain/LangGraph + BM25/dense hybrid + Cohere reranker only)
+    is the agreed starting scope once this gets picked back up - not
+    started yet. Real open decisions flagged but unresolved: embedding
+    provider (leaning toward consolidating on Cohere's own embed API
+    rather than adding a second provider), BM25 implementation (a real
+    `rank_bm25` library vs. Postgres's native full-text search, which
+    isn't literally the BM25 algorithm), and very likely a SEPARATE
+    Lambda (probably a container image, not a zip - this dependency
+    set is real weight) rather than bolting it onto the existing
+    lightweight API function.
+13. **Email service.** Still nothing - blocks email verification AND
+    password reset (both need real transactional email, likely AWS
+    SES given everything else is already on AWS). Neither is
+    considered broken right now (deliberately deferred), but both stay
+    fully unimplemented until this exists.
+14. **CloudFront cache-control for `index.html`.** Every frontend
+    redeploy currently needs a manual CloudFront invalidation
+    (`/*`) after the S3 upload, because `index.html` keeps the same
+    filename across every build (unlike the hashed JS/CSS filenames,
+    which never have a staleness problem). Setting a short/no-cache
+    `Cache-Control` header specifically on `index.html` (and the two
+    SVGs) would remove this manual step going forward - discussed,
+    not yet done.
