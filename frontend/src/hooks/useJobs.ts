@@ -1,15 +1,31 @@
 import { useCallback, useEffect, useState } from "react";
-import { UnauthorizedError, fetchAllJobs, fetchMyJobs, fetchSavedJobs, refreshJobs, setJobStatus } from "../api/client";
+import {
+  UnauthorizedError,
+  fetchAllJobs,
+  fetchArchivedJobs,
+  fetchMyJobs,
+  fetchSavedJobs,
+  refreshJobs,
+  setJobStatus,
+} from "../api/client";
 import type { JobOut, JobStatus, JobsListResponse } from "../api/types";
 import { useAuth } from "./useAuth";
 
-export type JobsTab = "all" | "mine" | "saved";
+export type JobsTab = "all" | "mine" | "saved" | "archived";
 
-/** Maps each tab to the GET call that serves it - one lookup table rather than an if/else, so adding a fourth tab later (e.g. "Good Matches") is a one-line addition here, not a change to the loading logic itself. */
+/** Maps each tab to the GET call that serves it - one lookup table rather than an if/else, so adding another tab later (e.g. "Good Matches") is a one-line addition here, not a change to the loading logic itself. */
 const TAB_FETCHERS: Record<JobsTab, (token: string) => Promise<JobsListResponse>> = {
   all: fetchAllJobs,
   mine: fetchMyJobs,
   saved: fetchSavedJobs,
+  archived: fetchArchivedJobs,
+};
+
+/** What status a job needs to have to belong on each non-"all" tab - "all" itself isn't here since it shows every job regardless of status. */
+const TAB_STATUS: Record<Exclude<JobsTab, "all">, JobStatus> = {
+  mine: "applied",
+  saved: "saved",
+  archived: "not_interested",
 };
 
 /**
@@ -67,14 +83,29 @@ export function useJobs() {
       if (!token) return;
       try {
         await setJobStatus(token, jobId, status);
-        // Re-fetch the CURRENT tab rather than mutating local state by
-        // hand - simpler, and correctly handles every case at once:
-        // on "All Jobs" the job stays visible with an updated status
-        // badge; on "My Jobs"/"Saved Jobs", a status change AWAY from
-        // that tab's own status correctly makes the job disappear from
-        // view, matching the real, permanent Applied<->Saved<->Not
-        // Interested transition rules a single status field enforces.
-        await loadTab(tab);
+        // Update local state directly instead of re-fetching the whole
+        // tab (FIXED 2026-09-02 - a real bug Aman caught: re-fetching
+        // briefly showed JobList's "Loading…" placeholder, collapsing
+        // the page's height and forcing the browser to reset scroll
+        // position, since there was nothing left to scroll TO for a
+        // moment. A local update never removes the list from the DOM
+        // at all, so there's nothing to reset scroll against - and
+        // it's also just cheaper, no extra round-trip to the backend.
+        //
+        // "all" keeps every job, just updates the one that changed.
+        // Every other tab only keeps a job if its NEW status still
+        // matches what that tab shows (see TAB_STATUS above) -
+        // otherwise the job no longer belongs here and disappears,
+        // the same real behavior as before, just computed locally.
+        setJobs((prev) => {
+          if (tab === "all") {
+            return prev.map((j) => (j.job_id === jobId ? { ...j, status } : j));
+          }
+          if (status === TAB_STATUS[tab]) {
+            return prev.map((j) => (j.job_id === jobId ? { ...j, status } : j));
+          }
+          return prev.filter((j) => j.job_id !== jobId);
+        });
       } catch (err) {
         if (err instanceof UnauthorizedError) {
           logout();
@@ -83,7 +114,7 @@ export function useJobs() {
         setError(err instanceof Error ? err.message : "Failed to update status.");
       }
     },
-    [token, tab, loadTab, logout],
+    [token, tab, logout],
   );
 
   const refresh = useCallback(async () => {
@@ -95,7 +126,9 @@ export function useJobs() {
       // The refresh itself doesn't return per-user data (it's a
       // shared action, see refreshJobs()'s own docstring) - reload
       // whichever tab is currently showing so the UI reflects the
-      // fresh results.
+      // fresh results. Unlike updateStatus above, a full reload here
+      // is correct, not a bug - the whole point of refreshing is
+      // pulling in a real, possibly very different set of jobs.
       await loadTab(tab);
     } catch (err) {
       if (err instanceof UnauthorizedError) {

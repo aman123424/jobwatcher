@@ -100,6 +100,11 @@ export function fetchSavedJobs(token: string): Promise<JobsListResponse> {
   return request<JobsListResponse>("/jobs/saved", { headers: authHeaders(token) });
 }
 
+/** GET /jobs/archived - "Archived Jobs": jobs this user marked Not Interested - UNLIKE Saved/Applied, still time-filtered to the same 24h window as "All Jobs" (see api.py). */
+export function fetchArchivedJobs(token: string): Promise<JobsListResponse> {
+  return request<JobsListResponse>("/jobs/archived", { headers: authHeaders(token) });
+}
+
 /**
  * POST /refresh - fetches every company live right now and stores the
  * result in the shared database (see api.py/ingest.py). Requires

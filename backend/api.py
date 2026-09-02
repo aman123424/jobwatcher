@@ -68,6 +68,11 @@ CURRENT ENDPOINTS:
                             Jobs". Requires login.
   - GET /jobs/saved          "Saved Jobs" - same idea, status == saved.
                             Requires login.
+  - GET /jobs/archived       "Archived Jobs" - status == not_interested,
+                            but UNLIKE mine/saved, still time-filtered
+                            to the same 24h window as "All Jobs" - a
+                            dismissed job quietly stops appearing here
+                            once the posting itself ages out. Requires login.
   - POST /jobs/{id}/status   sets (or changes) this user's status on
                             one job: saved, applied, or not_interested.
                             Requires login.
@@ -290,15 +295,26 @@ def refresh_jobs(user: User = Depends(get_current_user)):
     return RefreshSummary(**result)
 
 
+def _within_freshness_window(query):
+    """
+    Shared by GET /jobs and GET /jobs/archived below - both need the
+    same "posted within the last 24 hours, or of unknown post time"
+    condition (see ingest.py/is_recently_posted's own "unknown age
+    passes the filter" reasoning - a job with no posted_at at all,
+    like DE Shaw's, still shows rather than silently vanishing).
+    Factored out so this condition can't quietly drift between the two
+    endpoints that both need it.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=REFRESH_WINDOW_HOURS)
+    return query.filter((Job.posted_at >= cutoff) | (Job.posted_at.is_(None)))
+
+
 @app.get("/jobs", response_model=JobsListResponse)
 def get_all_jobs(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """
-    "All Jobs" tab - every job posted within the last 24 hours (or
-    with an unknown post time - see ingest.py/is_recently_posted's own
-    "unknown age passes the filter" reasoning, same idea applied here:
-    a job with no posted_at at all, like DE Shaw's, still shows rather
-    than silently vanishing), with THIS user's own status attached
-    where one exists.
+    "All Jobs" tab - every job posted within the last 24 hours (or of
+    unknown post time), with THIS user's own status attached where one
+    exists.
 
     Time-filtered HERE, at read time, rather than relying on
     POST /refresh to delete stale rows - this is deliberate: a row
@@ -307,8 +323,7 @@ def get_all_jobs(db: Session = Depends(get_db), user: User = Depends(get_current
     GET /jobs/mine or GET /jobs/saved below (neither of which apply
     any time filter at all) if the user already saved or applied to it.
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=REFRESH_WINDOW_HOURS)
-    jobs = db.query(Job).filter((Job.posted_at >= cutoff) | (Job.posted_at.is_(None))).all()
+    jobs = _within_freshness_window(db.query(Job)).all()
     statuses = _user_statuses_by_job_id(db, user)
     return JobsListResponse(jobs=[_to_job_out(j, statuses.get(j.id)) for j in jobs])
 
@@ -335,6 +350,30 @@ def get_saved_jobs(db: Session = Depends(get_db), user: User = Depends(get_curre
         .all()
     )
     return JobsListResponse(jobs=[_to_job_out(j, JobStatus.saved) for j in jobs])
+
+
+@app.get("/jobs/archived", response_model=JobsListResponse)
+def get_archived_jobs(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """
+    "Archived Jobs" tab - jobs this user marked Not Interested. Unlike
+    /jobs/mine and /jobs/saved, this ONE status-filtered tab ALSO
+    applies the same 24-hour freshness window "All Jobs" uses
+    (Aman's own explicit call, 2026-09-02) - a dismissed job quietly
+    stops showing up here once the posting itself ages out, the same
+    way it would from "All Jobs", rather than sticking around
+    indefinitely the way a real Saved/Applied job intentionally does.
+    The underlying user_jobs row itself is never deleted - it just
+    stops matching this query once the joined job's `posted_at` falls
+    outside the window, exactly the same "filter at read time, don't
+    delete rows" approach GET /jobs already uses.
+    """
+    jobs = (
+        _within_freshness_window(db.query(Job))
+        .join(UserJob, UserJob.job_id == Job.id)
+        .filter(UserJob.user_id == user.id, UserJob.status == JobStatus.not_interested)
+        .all()
+    )
+    return JobsListResponse(jobs=[_to_job_out(j, JobStatus.not_interested) for j in jobs])
 
 
 @app.post("/jobs/{job_id}/status")
