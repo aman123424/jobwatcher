@@ -56,3 +56,12 @@ export interface JobOut {
 export interface JobsListResponse {
   jobs: JobOut[];
 }
+
+/** Mirrors backend/api.py's RefreshSummary Pydantic model - what POST /refresh returns (counts, not the jobs themselves). */
+export interface RefreshSummary {
+  all_jobs_count: number;
+  relevant_jobs_count: number;
+  inserted: number;
+  updated: number;
+  skipped_unknown_company: number;
+}

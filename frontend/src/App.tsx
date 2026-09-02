@@ -2,7 +2,6 @@ import "./App.css";
 import { Navigate, Route, BrowserRouter as Router, Routes } from "react-router-dom";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { AuthProvider } from "./hooks/useAuth";
-import { HomePage } from "./pages/HomePage";
 import { JobsPage } from "./pages/JobsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { RegisterPage } from "./pages/RegisterPage";
@@ -11,6 +10,9 @@ import { RegisterPage } from "./pages/RegisterPage";
  * Pure composition, same principle the old single-page version of
  * this file followed - AuthProvider owns login state, each page owns
  * its own rendering, this file just wires routes to pages.
+ *
+ * "/" IS the jobs page directly (merged 2026-09-02 - no separate Home
+ * + "Get Started" click-through step anymore).
  */
 function App() {
   return (
@@ -21,14 +23,6 @@ function App() {
           <Route path="/register" element={<RegisterPage />} />
           <Route
             path="/"
-            element={
-              <ProtectedRoute>
-                <HomePage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/app"
             element={
               <ProtectedRoute>
                 <JobsPage />

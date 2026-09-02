@@ -48,13 +48,16 @@ CURRENT ENDPOINTS:
                             posted in the last 24 hours only, India-
                             based, Software-Engineer-shaped - see
                             ingest.py), and UPSERT each one into the
-                            real `jobs` table. STILL UNAUTHENTICATED,
-                            deliberately - meant to stay a shared,
-                            global action, not something individual
-                            users can spam (see project cost-planning
-                            notes) - though see this file's docstring
-                            further down for the real open gap this
-                            leaves (no admin-role check yet either).
+                            real `jobs` table. Requires login (added
+                            2026-09-02, alongside a "Refresh Jobs"
+                            button on the home page) - still a
+                            shared/global action affecting every
+                            user's data, not scoped to whoever
+                            triggered it; login just raises the bar
+                            from "anyone with the URL" to "anyone with
+                            an account" (see this endpoint's own
+                            docstring for the real open gap this still
+                            leaves - no true admin-role check yet).
   - GET /jobs                "All Jobs" - every job posted in the last
                             24 hours (or of unknown age), with THIS
                             logged-in user's own status attached where
@@ -259,26 +262,29 @@ def _user_statuses_by_job_id(db: Session, user: User) -> dict:
 
 
 @app.post("/refresh", response_model=RefreshSummary)
-def refresh_jobs():
+def refresh_jobs(user: User = Depends(get_current_user)):
     """
     THE ONLY ENDPOINT THAT ACTUALLY FETCHES ANYTHING. Runs the full
     live pipeline right now - every company, filtered to jobs posted
     in the last 24 hours AND India-based AND Software-Engineer-shaped
     (see ingest.py) - and UPSERTS each one into the real `jobs`
-    database table (see models.py). No longer an in-memory cache (see
-    PROJECT_LOG.md for the 2026-09-02 database migration) - every job
-    stored here is now real, shared, and visible to every user via
-    GET /jobs below, not just held in this one server process's memory.
+    database table (see models.py). Every job stored here is real,
+    shared, and visible to every user via GET /jobs below - triggering
+    a refresh is a shared/global action, not something that scopes
+    results to just the user who clicked it.
 
-    DELIBERATELY STILL UNAUTHENTICATED, same as before - this is meant
-    to stay a shared/global action (see project cost-planning notes:
-    keeping this un-spammable by individual users is what keeps the
-    Lambda free-tier math workable), not something wired to a specific
-    logged-in user. KNOWN OPEN GAP: with no admin-role concept built
-    yet, this endpoint is currently reachable by literally anyone with
-    the URL, not just Aman - genuinely worth locking down (an admin
-    check, or moving the trigger to a scheduled job instead of a public
-    endpoint) before this matters for real, but not solved here.
+    NOW REQUIRES LOGIN (changed 2026-09-02, was previously fully
+    public) - Aman explicitly added a "Refresh Jobs" button to the
+    logged-in home page, which reopened the original un-spammability
+    concern (see PROJECT_LOG.md's cost-planning notes) in a more
+    direct way than before: a public, unauthenticated trigger PLUS a
+    visible button inviting clicks is worse than either alone.
+    Requiring login raises the bar from "anyone with the URL" to
+    "anyone with an account" - not true admin-only gating (still a
+    known, accepted gap - no admin-role concept exists yet), but a
+    real improvement over the fully-open endpoint this used to be.
+    `user` itself is unused beyond the dependency enforcing login -
+    this stays a shared action, not scoped to who triggered it.
     """
     result = ingest_relevant_jobs()
     return RefreshSummary(**result)

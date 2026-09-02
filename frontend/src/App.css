@@ -98,25 +98,6 @@
 
 /* --- Home page --- */
 
-.home-page {
-  width: 100%;
-  max-width: 700px;
-  margin: 0 auto;
-  padding: 32px 24px;
-  box-sizing: border-box;
-  text-align: left;
-}
-
-.home-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.home-header h1 {
-  margin: 0;
-}
-
 .logout-button {
   font: inherit;
   font-size: 14px;
@@ -132,34 +113,7 @@
   color: var(--text-h);
 }
 
-.home-greeting {
-  font-size: 18px;
-  color: var(--text-h);
-  margin: 24px 0 4px;
-}
-
-.home-subtitle {
-  color: var(--text);
-  margin: 0 0 32px;
-}
-
-.get-started-button {
-  font: inherit;
-  font-weight: 600;
-  font-size: 16px;
-  color: #fff;
-  background: var(--accent);
-  border: none;
-  border-radius: 8px;
-  padding: 14px 28px;
-  cursor: pointer;
-}
-
-.get-started-button:hover {
-  filter: brightness(1.08);
-}
-
-/* --- Jobs page --- */
+/* --- Jobs page (also the home page - merged 2026-09-02) --- */
 
 .jobs-page {
   width: 100%;
@@ -183,24 +137,31 @@
   flex: 1;
 }
 
-.back-button {
-  font: inherit;
-  font-size: 14px;
-  color: var(--text);
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 14px;
-  cursor: pointer;
-}
-
-.back-button:hover {
-  color: var(--text-h);
-}
-
 .jobs-page-user {
   color: var(--text);
   font-size: 14px;
+}
+
+.refresh-button {
+  font: inherit;
+  font-weight: 600;
+  font-size: 14px;
+  color: #fff;
+  background: var(--accent);
+  border: none;
+  border-radius: 8px;
+  padding: 10px 20px;
+  margin-bottom: 20px;
+  cursor: pointer;
+}
+
+.refresh-button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.refresh-button:not(:disabled):hover {
+  filter: brightness(1.08);
 }
 
 /* --- Tabs --- */

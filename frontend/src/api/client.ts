@@ -1,4 +1,4 @@
-import type { AuthResponse, JobsListResponse, JobStatus, LoginPayload, RegisterPayload } from "./types";
+import type { AuthResponse, JobsListResponse, JobStatus, LoginPayload, RefreshSummary, RegisterPayload } from "./types";
 
 /**
  * Thrown specifically for a 401 response - lets callers (see
@@ -98,6 +98,18 @@ export function fetchMyJobs(token: string): Promise<JobsListResponse> {
 /** GET /jobs/saved - "Saved Jobs": jobs this user marked Saved. No time filter. */
 export function fetchSavedJobs(token: string): Promise<JobsListResponse> {
   return request<JobsListResponse>("/jobs/saved", { headers: authHeaders(token) });
+}
+
+/**
+ * POST /refresh - fetches every company live right now and stores the
+ * result in the shared database (see api.py/ingest.py). Requires
+ * login (added 2026-09-02, alongside the "Refresh Jobs" button this
+ * powers) - still a SHARED action affecting every user's data, not
+ * scoped to whoever clicked it. Slow by nature - tens of seconds -
+ * callers should show a loading state for the full duration.
+ */
+export function refreshJobs(token: string): Promise<RefreshSummary> {
+  return request<RefreshSummary>("/refresh", { method: "POST", headers: authHeaders(token) });
 }
 
 /** POST /jobs/{id}/status - sets (or overwrites) this user's status on one job. */

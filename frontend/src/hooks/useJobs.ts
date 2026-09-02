@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { UnauthorizedError, fetchAllJobs, fetchMyJobs, fetchSavedJobs, setJobStatus } from "../api/client";
+import { UnauthorizedError, fetchAllJobs, fetchMyJobs, fetchSavedJobs, refreshJobs, setJobStatus } from "../api/client";
 import type { JobOut, JobStatus, JobsListResponse } from "../api/types";
 import { useAuth } from "./useAuth";
 
@@ -14,20 +14,22 @@ const TAB_FETCHERS: Record<JobsTab, (token: string) => Promise<JobsListResponse>
 
 /**
  * Owns everything the jobs page needs: which tab is active, that
- * tab's jobs, loading/error state, and updating a job's status.
+ * tab's jobs, loading/error state, updating a job's status, and
+ * triggering a refresh.
  *
- * NO "Fetch Fresh" BUTTON HERE, DELIBERATELY: POST /refresh stays a
- * shared, unauthenticated, admin/scheduled action (see api.py's own
- * docstring and project cost-planning notes) - individual users
- * triggering their own refreshes was specifically the thing keeping
- * this un-spammable, so this hook only ever reads (GET), never calls
- * /refresh.
+ * TWO SEPARATE LOADING FLAGS, DELIBERATELY: switching tabs
+ * (`isLoading`) is a near-instant read; triggering `/refresh`
+ * (`isRefreshing`) is a real live fetch across every company - tens
+ * of seconds. Collapsing them into one flag couldn't distinguish "this
+ * will be back in a moment" from "this might take a while", which
+ * matters for what the UI should actually show while each is in flight.
  */
 export function useJobs() {
   const { token, logout } = useAuth();
   const [tab, setTab] = useState<JobsTab>("all");
   const [jobs, setJobs] = useState<JobOut[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const loadTab = useCallback(
@@ -84,5 +86,27 @@ export function useJobs() {
     [token, tab, loadTab, logout],
   );
 
-  return { tab, setTab, jobs, isLoading, error, updateStatus };
+  const refresh = useCallback(async () => {
+    if (!token) return;
+    setIsRefreshing(true);
+    setError(null);
+    try {
+      await refreshJobs(token);
+      // The refresh itself doesn't return per-user data (it's a
+      // shared action, see refreshJobs()'s own docstring) - reload
+      // whichever tab is currently showing so the UI reflects the
+      // fresh results.
+      await loadTab(tab);
+    } catch (err) {
+      if (err instanceof UnauthorizedError) {
+        logout();
+        return;
+      }
+      setError(err instanceof Error ? err.message : "Refresh failed.");
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [token, tab, loadTab, logout]);
+
+  return { tab, setTab, jobs, isLoading, isRefreshing, error, updateStatus, refresh };
 }
