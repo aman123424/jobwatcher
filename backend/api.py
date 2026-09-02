@@ -309,6 +309,27 @@ def _within_freshness_window(query):
     return query.filter((Job.posted_at >= cutoff) | (Job.posted_at.is_(None)))
 
 
+def _newest_first(query):
+    """
+    Shared by every job-listing endpoint below - none of them had ANY
+    explicit ordering before this (FIXED 2026-09-02, a real bug Aman
+    caught): Postgres was free to return rows in whatever order it
+    found convenient, which meant a newly-surfaced posting from a
+    refresh could land anywhere in the list, forcing a full manual
+    re-scan every single time to find what was actually new. Sorting
+    by `posted_at` descending means the freshest postings consistently
+    surface at the top instead.
+
+    `.nullslast()` matters specifically here: Postgres's own default
+    for a DESC sort puts NULLs FIRST, not last - without this, every
+    job with an unknown post time (DE Shaw - see Job.posted_at's own
+    nullable reasoning) would dominate the very top of every list,
+    which is the opposite of what "newest first" should mean for jobs
+    we don't even know the age of.
+    """
+    return query.order_by(Job.posted_at.desc().nullslast())
+
+
 @app.get("/jobs", response_model=JobsListResponse)
 def get_all_jobs(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """
@@ -323,7 +344,7 @@ def get_all_jobs(db: Session = Depends(get_db), user: User = Depends(get_current
     GET /jobs/mine or GET /jobs/saved below (neither of which apply
     any time filter at all) if the user already saved or applied to it.
     """
-    jobs = _within_freshness_window(db.query(Job)).all()
+    jobs = _newest_first(_within_freshness_window(db.query(Job))).all()
     statuses = _user_statuses_by_job_id(db, user)
     return JobsListResponse(jobs=[_to_job_out(j, statuses.get(j.id)) for j in jobs])
 
@@ -332,7 +353,7 @@ def get_all_jobs(db: Session = Depends(get_db), user: User = Depends(get_current
 def get_my_jobs(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """"My Jobs" tab - every job this user has marked Applied. No time filter - stays visible long after the posting itself ages out of "All Jobs", exactly as specified: saved/applied jobs persist "until the user himself decides to remove them"."""
     jobs = (
-        db.query(Job)
+        _newest_first(db.query(Job))
         .join(UserJob, UserJob.job_id == Job.id)
         .filter(UserJob.user_id == user.id, UserJob.status == JobStatus.applied)
         .all()
@@ -344,7 +365,7 @@ def get_my_jobs(db: Session = Depends(get_db), user: User = Depends(get_current_
 def get_saved_jobs(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """"Saved Jobs" tab - same idea as GET /jobs/mine above, filtered to status == saved instead of applied."""
     jobs = (
-        db.query(Job)
+        _newest_first(db.query(Job))
         .join(UserJob, UserJob.job_id == Job.id)
         .filter(UserJob.user_id == user.id, UserJob.status == JobStatus.saved)
         .all()
@@ -368,7 +389,7 @@ def get_archived_jobs(db: Session = Depends(get_db), user: User = Depends(get_cu
     delete rows" approach GET /jobs already uses.
     """
     jobs = (
-        _within_freshness_window(db.query(Job))
+        _newest_first(_within_freshness_window(db.query(Job)))
         .join(UserJob, UserJob.job_id == Job.id)
         .filter(UserJob.user_id == user.id, UserJob.status == JobStatus.not_interested)
         .all()
