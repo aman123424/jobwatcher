@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { AvatarMenu } from "../components/AvatarMenu";
 import { JobList } from "../components/JobList";
 import { JobsTabs } from "../components/JobsTabs";
@@ -15,6 +16,15 @@ export function JobsPage() {
   const { user } = useAuth();
   const { tab, setTab, jobs, isLoading, isRefreshing, error, statusError, updateStatus, refresh, lastRefreshedAt } =
     useJobs();
+  // Company-name search (Aman's own sketch, 2026-09-03) - filters
+  // whatever the active tab already loaded, client-side. Deliberately
+  // NOT sent to the backend as a query param: the jobs for a tab are
+  // already fully fetched, and typing a search shouldn't re-hit the
+  // network on every keystroke for a filter this cheap to do locally.
+  const [companySearch, setCompanySearch] = useState("");
+  const filteredJobs = companySearch.trim()
+    ? jobs.filter((j) => j.company_name.toLowerCase().includes(companySearch.trim().toLowerCase()))
+    : jobs;
 
   // My Jobs guarantees every job shown is Applied - "Rejected" there
   // means "mark it". Rejected guarantees every job shown IS rejected -
@@ -40,7 +50,17 @@ export function JobsPage() {
         {lastRefreshedAt && <span className="last-refreshed">Last fetched {lastRefreshedAt}</span>}
       </div>
 
-      <JobsTabs tab={tab} onChange={setTab} />
+      <div className="jobs-filter-row">
+        <input
+          type="text"
+          className="company-search-input"
+          placeholder="Search companies"
+          value={companySearch}
+          onChange={(e) => setCompanySearch(e.target.value)}
+          aria-label="Search companies"
+        />
+        <JobsTabs tab={tab} onChange={setTab} />
+      </div>
 
       {/* A single job's status update failing in the background - the
           list itself still loaded fine, so this stays a small banner
@@ -51,10 +71,11 @@ export function JobsPage() {
 
       <main>
         <JobList
-          jobs={jobs}
+          jobs={filteredJobs}
           isLoading={isLoading}
           error={error}
           rejectAction={rejectAction}
+          emptyMessage={companySearch.trim() ? `No companies match "${companySearch.trim()}".` : undefined}
           onSetStatus={updateStatus}
         />
       </main>

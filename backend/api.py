@@ -62,6 +62,10 @@ CURRENT ENDPOINTS:
                             24 hours (or of unknown age), with THIS
                             logged-in user's own status attached where
                             one exists. Requires login.
+  - GET /jobs/new            "New Jobs" - same freshness window as "All
+                            Jobs", filtered to jobs this user has never
+                            acted on at all (no user_jobs row). Requires
+                            login.
   - GET /jobs/mine           "My Jobs" - every job this user marked
                             Applied. No time filter - stays visible
                             long after a posting ages out of "All
@@ -395,6 +399,34 @@ def get_all_jobs(db: Session = Depends(get_db), user: User = Depends(get_current
     statuses = _user_statuses_by_job_id(db, user)
     return JobsListResponse(
         jobs=[_to_job_out(j, statuses.get(j.id)) for j in jobs],
+        last_refreshed_at=_get_last_refreshed_at(db),
+    )
+
+
+@app.get("/jobs/new", response_model=JobsListResponse)
+def get_new_jobs(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """
+    "New Jobs" tab (added 2026-09-03) - jobs posted within the last 24
+    hours (same freshness window as "All Jobs") that this user has
+    NEVER acted on at all - no matching user_jobs row (see UserJob's
+    own docstring in models.py: a missing row already means
+    "unseen/no status", not a fourth status value, so this is a filter
+    on absence, not on some `status = null`).
+
+    A dedicated "still needs a decision" queue, separate from "All
+    Jobs" (which shows every job regardless of status) - this one
+    naturally shrinks as a job gets ANY status, the same
+    disappears-once-handled behavior every other tab already gives a
+    user for their own chosen status, just for "nothing chosen yet".
+    """
+    acted_job_ids = db.query(UserJob.job_id).filter(UserJob.user_id == user.id)
+    jobs = (
+        _newest_first(_within_freshness_window(db.query(Job)))
+        .filter(~Job.id.in_(acted_job_ids))
+        .all()
+    )
+    return JobsListResponse(
+        jobs=[_to_job_out(j, None) for j in jobs],
         last_refreshed_at=_get_last_refreshed_at(db),
     )
 

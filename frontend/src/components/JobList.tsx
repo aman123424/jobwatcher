@@ -7,11 +7,20 @@ interface JobListProps {
   error: string | null;
   /** Forwarded to every JobCard unchanged - see JobCard.tsx's own docstring for what it controls. Computed once by JobsPage.tsx from the active tab, not per-job. */
   rejectAction?: "reject" | "unreject";
+  /** What to show when `jobs` is empty - lets JobsPage.tsx distinguish "this tab genuinely has nothing" from "no company matches your search" (see its companySearch filtering) rather than both looking like the same "No jobs here yet." */
+  emptyMessage?: string;
   onSetStatus: (jobId: string, status: JobStatus | null) => void;
 }
 
 /** Handles every state the list can be in (loading, error, empty, real results) so JobCard only ever has to render one real job. */
-export function JobList({ jobs, isLoading, error, rejectAction, onSetStatus }: JobListProps) {
+export function JobList({
+  jobs,
+  isLoading,
+  error,
+  rejectAction,
+  emptyMessage = "No jobs here yet.",
+  onSetStatus,
+}: JobListProps) {
   if (error) {
     return <p className="job-list-status job-list-error">{error}</p>;
   }
@@ -21,7 +30,7 @@ export function JobList({ jobs, isLoading, error, rejectAction, onSetStatus }: J
   }
 
   if (jobs.length === 0) {
-    return <p className="job-list-status">No jobs here yet.</p>;
+    return <p className="job-list-status">{emptyMessage}</p>;
   }
 
   return (

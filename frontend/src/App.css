@@ -298,32 +298,40 @@
   color: var(--text);
 }
 
-/* --- Tabs --- */
+/* --- Company search + tab dropdown --- */
 
-.jobs-tabs {
+.jobs-filter-row {
   display: flex;
-  gap: 4px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 4px;
-  width: fit-content;
+  gap: 10px;
   margin-bottom: 24px;
 }
 
-.jobs-tab-button {
+.company-search-input {
+  flex: 1;
   font: inherit;
   font-size: 14px;
-  color: var(--text);
-  background: transparent;
-  border: none;
-  border-radius: 6px;
-  padding: 6px 14px;
-  cursor: pointer;
+  color: var(--text-h);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 14px;
 }
 
-.jobs-tab-button.active {
+.company-search-input:focus {
+  outline: none;
+  border-color: var(--accent-border);
+}
+
+.jobs-tabs-select {
+  font: inherit;
+  font-size: 14px;
   color: var(--text-h);
-  background: var(--accent-bg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  flex-shrink: 0;
 }
 
 /* --- Job list / status --- */

@@ -5,6 +5,7 @@ import {
   fetchAllJobs,
   fetchArchivedJobs,
   fetchMyJobs,
+  fetchNewJobs,
   fetchRejectedJobs,
   fetchSavedJobs,
   refreshJobs,
@@ -13,19 +14,30 @@ import {
 import type { JobOut, JobStatus, JobsListResponse } from "../api/types";
 import { useAuth } from "./useAuth";
 
-export type JobsTab = "all" | "mine" | "saved" | "rejected" | "archived";
+export type JobsTab = "all" | "new" | "mine" | "saved" | "rejected" | "archived";
 
 /** Maps each tab to the GET call that serves it - one lookup table rather than an if/else, so adding another tab later (e.g. "Good Matches") is a one-line addition here, not a change to the loading logic itself. */
 const TAB_FETCHERS: Record<JobsTab, (token: string) => Promise<JobsListResponse>> = {
   all: fetchAllJobs,
+  new: fetchNewJobs,
   mine: fetchMyJobs,
   saved: fetchSavedJobs,
   rejected: fetchRejectedJobs,
   archived: fetchArchivedJobs,
 };
 
-/** What status a job needs to have to belong on each non-"all" tab - "all" itself isn't here since it shows every job regardless of status. */
-const TAB_STATUS: Record<Exclude<JobsTab, "all">, JobStatus> = {
+/**
+ * What status a job needs to have to belong on each non-"all" tab -
+ * "all" itself isn't here since it shows every job regardless of
+ * status. "new" maps to `null` (no status at all, not a fourth real
+ * JobStatus value - see UserJob's own docstring in models.py) rather
+ * than being left out of this table, so updateStatus below can treat
+ * every non-"all" tab identically: still belongs here once its status
+ * matches TAB_STATUS[tab], gone otherwise - "new" included, no
+ * special-casing needed.
+ */
+const TAB_STATUS: Record<Exclude<JobsTab, "all">, JobStatus | null> = {
+  new: null,
   mine: "applied",
   saved: "saved",
   rejected: "rejected",

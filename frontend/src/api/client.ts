@@ -90,6 +90,11 @@ export function fetchAllJobs(token: string): Promise<JobsListResponse> {
   return request<JobsListResponse>("/jobs", { headers: authHeaders(token) });
 }
 
+/** GET /jobs/new - "New Jobs": jobs this user has never acted on at all, same 24h freshness window as "All Jobs". */
+export function fetchNewJobs(token: string): Promise<JobsListResponse> {
+  return request<JobsListResponse>("/jobs/new", { headers: authHeaders(token) });
+}
+
 /** GET /jobs/mine - "My Jobs": jobs this user marked Applied. No time filter. */
 export function fetchMyJobs(token: string): Promise<JobsListResponse> {
   return request<JobsListResponse>("/jobs/mine", { headers: authHeaders(token) });
