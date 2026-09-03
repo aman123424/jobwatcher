@@ -87,12 +87,21 @@ CURRENT ENDPOINTS:
                             when the job's current status is already
                             applied (see this endpoint's own docstring).
                             Requires login.
-  - POST /companies         Admin-only (see auth.py's get_current_admin
+  - GET/POST/PUT/DELETE
+    /companies              Admin-only (see auth.py's get_current_admin
                             and models.py's User.is_admin, both added
-                            2026-09-03). Adds a company to the shared
-                            `companies` table - fetched starting the
-                            very next POST /refresh (see ingest.py's
+                            2026-09-03) - full CRUD on the shared
+                            `companies` table, backing the /companies
+                            admin page (CompaniesPage.tsx). A company
+                            added or edited here is fetched starting
+                            the very next POST /refresh (see ingest.py's
                             own module docstring for how that's wired).
+                            POST/PUT restrict `platform` to
+                            SelfServicePlatform (see its own comment
+                            below) - only the genuinely generic
+                            platforms, not the four hardcoded-to-one-
+                            company ones. DELETE cascades to that
+                            company's jobs (and their user_jobs rows).
 
 NOT YET BUILT (real, known gaps, not silently faked):
   - tech_stack and years_experience_required are real fields in every
@@ -175,7 +184,7 @@ app.add_middleware(
         # rather than removed, in case it's ever used directly again.
         "https://jobwatcher.mykave.in",
     ],
-    allow_methods=["GET", "POST", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -640,12 +649,34 @@ class CreateCompanyRequest(BaseModel):
     slug: str
 
 
-class CreateCompanyResponse(BaseModel):
+class CompanyOut(BaseModel):
     id: str
     name: str
+    platform: str
+    slug: str
 
 
-@app.post("/companies", response_model=CreateCompanyResponse, status_code=status.HTTP_201_CREATED)
+def _to_company_out(company: Company) -> CompanyOut:
+    return CompanyOut(id=str(company.id), name=company.name, platform=company.platform.value, slug=company.slug)
+
+
+@app.get("/companies", response_model=list[CompanyOut])
+def list_companies(db: Session = Depends(get_db), admin: User = Depends(get_current_admin)):
+    """Admin-only - the full `companies` list backing the /companies management page (CompaniesPage.tsx), not the job feed. Alphabetical, since there's no other natural order for an admin scanning for one company by name."""
+    companies = db.query(Company).order_by(Company.name).all()
+    return [_to_company_out(c) for c in companies]
+
+
+@app.get("/companies/{company_id}", response_model=CompanyOut)
+def get_company(company_id: str, db: Session = Depends(get_db), admin: User = Depends(get_current_admin)):
+    """Admin-only - what EditCompanyPage.tsx loads a company's current values from, fetched fresh by id (not passed through navigation state) so a direct URL visit or page reload still works."""
+    company = db.get(Company, company_id)
+    if company is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
+    return _to_company_out(company)
+
+
+@app.post("/companies", response_model=CompanyOut, status_code=status.HTTP_201_CREATED)
 def create_company(
     payload: CreateCompanyRequest,
     db: Session = Depends(get_db),
@@ -680,6 +711,69 @@ def create_company(
     db.add(company)
     db.commit()
     db.refresh(company)
-    return CreateCompanyResponse(id=str(company.id), name=company.name)
+    return _to_company_out(company)
+
+
+@app.put("/companies/{company_id}", response_model=CompanyOut)
+def update_company(
+    company_id: str,
+    payload: CreateCompanyRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """
+    Admin-only. Same SelfServicePlatform restriction as create (see
+    its own comment above) - deliberately, not just for new companies:
+    letting an edit repoint an EXISTING company at one of the
+    hardcoded-to-one-company fetchers (amazon/deshaw/atlassian/pcsx)
+    would break that company's fetching too. Editing one of those
+    original four (Amazon/DE Shaw/Atlassian/Microsoft) themselves
+    stays a direct-database action, same as it always has been - a
+    known, deliberate limitation of this admin UI, not an oversight.
+    """
+    company = db.get(Company, company_id)
+    if company is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
+
+    existing = (
+        db.query(Company)
+        .filter(Company.name == payload.company_name, Company.id != company_id)
+        .first()
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A company with this name already exists",
+        )
+
+    company.name = payload.company_name
+    company.platform = Platform(payload.platform)
+    company.slug = payload.slug
+    db.commit()
+    db.refresh(company)
+    return _to_company_out(company)
+
+
+@app.delete("/companies/{company_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_company(company_id: str, db: Session = Depends(get_db), admin: User = Depends(get_current_admin)):
+    """
+    Admin-only. CASCADES manually - Job.company_id has no ON DELETE
+    CASCADE at the database level (see models.py), so deleting a
+    Company with real Job rows still pointing at it would otherwise
+    fail outright on the foreign key constraint. Removing a company
+    here means "stop tracking everything about it," so its jobs (and
+    any user_jobs rows referencing those jobs - saved/applied/etc.
+    status other users may have set) go with it, not just the
+    `companies` row itself.
+    """
+    company = db.get(Company, company_id)
+    if company is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
+
+    job_ids = db.query(Job.id).filter(Job.company_id == company_id)
+    db.query(UserJob).filter(UserJob.job_id.in_(job_ids)).delete(synchronize_session=False)
+    db.query(Job).filter(Job.company_id == company_id).delete(synchronize_session=False)
+    db.delete(company)
+    db.commit()
 
 

@@ -90,15 +90,25 @@ export interface RefreshSummary {
  */
 export type SelfServicePlatform = "greenhouse" | "lever" | "ashby" | "smartrecruiters" | "workday";
 
-/** What POST /companies expects - mirrors backend/api.py's CreateCompanyRequest. */
+/** What POST /companies and PUT /companies/{id} both expect - mirrors backend/api.py's CreateCompanyRequest (reused for both create and update, same shape). */
 export interface CreateCompanyPayload {
   company_name: string;
   platform: SelfServicePlatform;
   slug: string;
 }
 
-/** What POST /companies returns - mirrors backend/api.py's CreateCompanyResponse. */
-export interface CreateCompanyResponse {
+/**
+ * One company as the /companies management page sees it - mirrors
+ * backend/api.py's CompanyOut. `platform` is a plain string here, not
+ * SelfServicePlatform - the four existing hardcoded-to-one-company
+ * platforms (amazon/deshaw/atlassian/pcsx) are real values a listed
+ * company can have even though they're not choosable for a NEW one
+ * (see SelfServicePlatform's own docstring above), so this type has
+ * to be able to represent them too.
+ */
+export interface CompanyOut {
   id: string;
   name: string;
+  platform: string;
+  slug: string;
 }

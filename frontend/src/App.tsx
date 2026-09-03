@@ -4,6 +4,8 @@ import { ProtectedRoute } from "./components/ProtectedRoute";
 import { AuthProvider } from "./hooks/useAuth";
 import { ThemeProvider } from "./hooks/useTheme";
 import { AddCompanyPage } from "./pages/AddCompanyPage";
+import { CompaniesPage } from "./pages/CompaniesPage";
+import { EditCompanyPage } from "./pages/EditCompanyPage";
 import { JobsPage } from "./pages/JobsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ProfilePage } from "./pages/ProfilePage";
@@ -42,10 +44,26 @@ function App() {
               }
             />
             <Route
+              path="/companies"
+              element={
+                <ProtectedRoute adminOnly>
+                  <CompaniesPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/add-company"
               element={
                 <ProtectedRoute adminOnly>
                   <AddCompanyPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/companies/:id/edit"
+              element={
+                <ProtectedRoute adminOnly>
+                  <EditCompanyPage />
                 </ProtectedRoute>
               }
             />

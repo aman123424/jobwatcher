@@ -1,10 +1,7 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
-import { AvatarMenu } from "../components/AvatarMenu";
+import { AppHeader } from "../components/AppHeader";
 import { JobList } from "../components/JobList";
 import { JobsTabs } from "../components/JobsTabs";
-import { ThemeToggle } from "../components/ThemeToggle";
-import { useAuth } from "../hooks/useAuth";
 import { useJobs } from "../hooks/useJobs";
 
 /**
@@ -14,7 +11,6 @@ import { useJobs } from "../hooks/useJobs";
  * removed, so this now IS what a logged-in user lands on directly).
  */
 export function JobsPage() {
-  const { user } = useAuth();
   const { tab, setTab, jobs, isLoading, isRefreshing, error, statusError, updateStatus, refresh, lastRefreshedAt } =
     useJobs();
   // Company-name search (Aman's own sketch, 2026-09-03) - filters
@@ -36,30 +32,13 @@ export function JobsPage() {
 
   return (
     <div className="jobs-page">
-      <header className="jobs-page-header">
-        <h1>JobWatcher</h1>
-        <div className="jobs-page-header-right">
-          <ThemeToggle />
-          {user && <AvatarMenu name={user.name} />}
-        </div>
-      </header>
+      <AppHeader />
 
       <div className="refresh-row">
         <button type="button" className="refresh-button" onClick={refresh} disabled={isRefreshing}>
           {isRefreshing ? "Refreshing…" : "Refresh Jobs"}
         </button>
         {lastRefreshedAt && <span className="last-refreshed">Last fetched {lastRefreshedAt}</span>}
-        {/* Admin-only (see App.tsx's /add-company route) - the real
-            access check is server-side (POST /companies' get_current_admin,
-            see backend/auth.py), this just avoids showing a dead-end
-            button to everyone else. Same row as Refresh Jobs, pushed to
-            the far right by `last-fetched`'s flex:1 (Aman's own
-            placement, 2026-09-04). */}
-        {user?.is_admin && (
-          <Link to="/add-company" className="add-company-button">
-            + Add Company
-          </Link>
-        )}
       </div>
 
       <div className="jobs-filter-row">

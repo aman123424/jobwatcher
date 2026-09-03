@@ -279,6 +279,7 @@
 }
 
 .refresh-button {
+  display: inline-block;
   font: inherit;
   font-weight: 600;
   font-size: 14px;
@@ -288,6 +289,7 @@
   border-radius: 8px;
   padding: 10px 20px;
   cursor: pointer;
+  text-decoration: none;
 }
 
 .refresh-button:disabled {
@@ -302,26 +304,6 @@
 .last-refreshed {
   font-size: 13px;
   color: var(--text);
-}
-
-/* --- Add Company (admin-only) --- */
-
-.add-company-button {
-  margin-left: auto;
-  font: inherit;
-  font-weight: 600;
-  font-size: 13px;
-  color: var(--text-h);
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 6px 12px;
-  cursor: pointer;
-  text-decoration: none;
-}
-
-.add-company-button:hover {
-  background: var(--accent-bg);
 }
 
 /* --- Company search + tab dropdown --- */
@@ -494,4 +476,68 @@
   color: #fff;
   background: var(--accent);
   border-color: var(--accent);
+}
+
+/* --- Company card (CompaniesPage.tsx) --- */
+
+.company-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 20px;
+}
+
+.company-card-name {
+  font-size: 18px;
+  margin: 0 0 2px;
+  color: var(--text-h);
+}
+
+.company-card-platform {
+  color: var(--text);
+  font-size: 14px;
+  margin: 0;
+  text-transform: capitalize;
+}
+
+.company-card-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.icon-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.icon-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.icon-button:hover {
+  color: var(--text-h);
+  background: var(--accent-bg);
+}
+
+.icon-button-danger {
+  color: #e5484d;
+}
+
+.icon-button-danger:hover {
+  color: #e5484d;
+  background: rgba(229, 72, 77, 0.1);
+  border-color: rgba(229, 72, 77, 0.3);
 }

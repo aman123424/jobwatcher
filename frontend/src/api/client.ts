@@ -1,7 +1,7 @@
 import type {
   AuthResponse,
+  CompanyOut,
   CreateCompanyPayload,
-  CreateCompanyResponse,
   JobsListResponse,
   JobStatus,
   LoginPayload,
@@ -68,6 +68,14 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
       throw new UnauthorizedError(message);
     }
     throw new Error(message);
+  }
+
+  // A 204 (deleteCompany's response) has no body at all - calling
+  // response.json() on it throws (empty string isn't valid JSON), so
+  // this has to be checked before parsing, not just handled elsewhere
+  // via a caller-side try/catch that would swallow REAL JSON errors too.
+  if (response.status === 204) {
+    return undefined as T;
   }
 
   return (await response.json()) as T;
@@ -153,11 +161,38 @@ export function clearJobStatus(token: string, jobId: string): Promise<{ job_id: 
   });
 }
 
+/** GET /companies - admin-only; the full list backing CompaniesPage.tsx. */
+export function fetchCompanies(token: string): Promise<CompanyOut[]> {
+  return request<CompanyOut[]>("/companies", { headers: authHeaders(token) });
+}
+
+/** GET /companies/{id} - admin-only; what EditCompanyPage.tsx loads a company's current values from. */
+export function fetchCompany(token: string, companyId: string): Promise<CompanyOut> {
+  return request<CompanyOut>(`/companies/${companyId}`, { headers: authHeaders(token) });
+}
+
 /** POST /companies - admin-only (see api.py's get_current_admin); adds a company that starts getting fetched from the next Refresh Jobs onward. A non-admin token gets a 403, surfaced by request()'s normal error handling - same as any other failure. */
-export function createCompany(token: string, payload: CreateCompanyPayload): Promise<CreateCompanyResponse> {
-  return request<CreateCompanyResponse>("/companies", {
+export function createCompany(token: string, payload: CreateCompanyPayload): Promise<CompanyOut> {
+  return request<CompanyOut>("/companies", {
     method: "POST",
     headers: { ...authHeaders(token), "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+  });
+}
+
+/** PUT /companies/{id} - admin-only; edits an existing company's name/platform/slug. */
+export function updateCompany(token: string, companyId: string, payload: CreateCompanyPayload): Promise<CompanyOut> {
+  return request<CompanyOut>(`/companies/${companyId}`, {
+    method: "PUT",
+    headers: { ...authHeaders(token), "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+/** DELETE /companies/{id} - admin-only; also removes that company's jobs (and any saved/applied/etc. status other users had on them) - see api.py's delete_company for why that cascade is necessary, not optional. */
+export function deleteCompany(token: string, companyId: string): Promise<void> {
+  return request<void>(`/companies/${companyId}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
   });
 }
