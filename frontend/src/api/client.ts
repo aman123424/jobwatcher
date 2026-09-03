@@ -100,7 +100,12 @@ export function fetchSavedJobs(token: string): Promise<JobsListResponse> {
   return request<JobsListResponse>("/jobs/saved", { headers: authHeaders(token) });
 }
 
-/** GET /jobs/archived - "Archived Jobs": jobs this user marked Not Interested - UNLIKE Saved/Applied, still time-filtered to the same 24h window as "All Jobs" (see api.py). */
+/** GET /jobs/rejected - "Rejected": jobs this user marked Rejected. No time filter, same as My Jobs/Saved Jobs. */
+export function fetchRejectedJobs(token: string): Promise<JobsListResponse> {
+  return request<JobsListResponse>("/jobs/rejected", { headers: authHeaders(token) });
+}
+
+/** GET /jobs/archived - "Archived Jobs": jobs this user marked Not Interested - UNLIKE Saved/Applied/Rejected, still time-filtered to the same 24h window as "All Jobs" (see api.py). */
 export function fetchArchivedJobs(token: string): Promise<JobsListResponse> {
   return request<JobsListResponse>("/jobs/archived", { headers: authHeaders(token) });
 }
@@ -123,5 +128,13 @@ export function setJobStatus(token: string, jobId: string, jobStatus: JobStatus)
     method: "POST",
     headers: { ...authHeaders(token), "Content-Type": "application/json" },
     body: JSON.stringify({ status: jobStatus }),
+  });
+}
+
+/** DELETE /jobs/{id}/status - clears this user's status on one job (the "toggle off" counterpart to setJobStatus, e.g. undoing an accidental Not Interested click). */
+export function clearJobStatus(token: string, jobId: string): Promise<{ job_id: string; status: null }> {
+  return request(`/jobs/${jobId}/status`, {
+    method: "DELETE",
+    headers: authHeaders(token),
   });
 }

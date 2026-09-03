@@ -106,14 +106,23 @@ class SkillImportance(str, enum.Enum):
 
 
 class JobStatus(str, enum.Enum):
-    """The three states a user can put a job into. Deliberately ONE
-    field, not a separate boolean per state (e.g. is_saved AND
-    is_applied) - a job has exactly one current status for a given
-    user, and Aman confirmed this single-status model (rather than
-    "saved" persisting independently of "applied") is what he wants."""
+    """The states a user can put a job into. Deliberately ONE field,
+    not a separate boolean per state (e.g. is_saved AND is_applied) -
+    a job has exactly one current status for a given user, and Aman
+    confirmed this single-status model (rather than "saved" persisting
+    independently of "applied") is what he wants.
+
+    `rejected` (added 2026-09-03) is gated, not freely settable like
+    the other three: api.py's set_job_status only allows transitioning
+    a job TO rejected when its CURRENT status is already `applied` -
+    "Rejected" only makes sense for a job you actually applied to.
+    Toggling it back off (see api.py's clear_job_status) still clears
+    to no status at all, same as every other status - no special case
+    needed there."""
     saved = "saved"
     applied = "applied"
     not_interested = "not_interested"
+    rejected = "rejected"
 
 
 # =============================================================================
@@ -346,3 +355,19 @@ class UserJob(Base):
 
     user: Mapped["User"] = relationship(back_populates="user_jobs")
     job: Mapped["Job"] = relationship(back_populates="user_jobs")
+
+
+class RefreshLog(Base):
+    """
+    Tracks when POST /refresh last actually ran - a single row (fixed
+    id=1, upserted in place every time), not one row per refresh. Only
+    exists so GET /jobs and friends can tell every user "jobs were last
+    fetched at ___" even on a fresh page load, before anyone in THIS
+    browser session has clicked Refresh - refreshing is a shared/global
+    action (see api.py), so this timestamp needs to be genuinely shared
+    state in the database, not something tracked client-side per user.
+    """
+    __tablename__ = "refresh_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    refreshed_at: Mapped["DateTime"] = mapped_column(DateTime(timezone=True), nullable=False)

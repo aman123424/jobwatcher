@@ -68,13 +68,20 @@ CURRENT ENDPOINTS:
                             Jobs". Requires login.
   - GET /jobs/saved          "Saved Jobs" - same idea, status == saved.
                             Requires login.
+  - GET /jobs/rejected       "Rejected" - status == rejected, same "no
+                            time filter" treatment as mine/saved.
+                            Requires login.
   - GET /jobs/archived       "Archived Jobs" - status == not_interested,
-                            but UNLIKE mine/saved, still time-filtered
-                            to the same 24h window as "All Jobs" - a
-                            dismissed job quietly stops appearing here
-                            once the posting itself ages out. Requires login.
+                            but UNLIKE mine/saved/rejected, still
+                            time-filtered to the same 24h window as
+                            "All Jobs" - a dismissed job quietly stops
+                            appearing here once the posting itself ages
+                            out. Requires login.
   - POST /jobs/{id}/status   sets (or changes) this user's status on
-                            one job: saved, applied, or not_interested.
+                            one job: saved, applied, not_interested, or
+                            rejected - rejected is GATED, only settable
+                            when the job's current status is already
+                            applied (see this endpoint's own docstring).
                             Requires login.
 
 NOT YET BUILT (real, known gaps, not silently faked):
@@ -109,7 +116,7 @@ from auth import get_current_user
 from auth_routes import router as auth_router
 from db import get_db
 from ingest import ingest_relevant_jobs
-from models import Job, JobStatus, User, UserJob
+from models import Job, JobStatus, RefreshLog, User, UserJob
 from scoring import REFRESH_WINDOW_HOURS
 
 app = FastAPI(
@@ -155,7 +162,7 @@ app.add_middleware(
         # rather than removed, in case it's ever used directly again.
         "https://jobwatcher.mykave.in",
     ],
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -191,6 +198,11 @@ class JobOut(BaseModel):
 
 class JobsListResponse(BaseModel):
     jobs: list[JobOut]
+    # When POST /refresh last actually ran (see models.py's RefreshLog)
+    # - None only on a brand new database that's never been refreshed
+    # at all. A shared, global value (same for every user, unlike each
+    # job's own per-user `status`) - see _get_last_refreshed_at below.
+    last_refreshed_at: str | None = None
 
 
 class SetStatusRequest(BaseModel):
@@ -245,6 +257,30 @@ def _format_posted_at(dt: datetime | None, platform) -> str | None:
     return f"{dt_ist.day} {dt_ist.strftime('%b')}, {hour_12}{am_pm}"
 
 
+def _format_ist_datetime(dt: datetime | None) -> str | None:
+    """
+    Same "how Aman would actually read his own clock" IST conversion
+    as _format_posted_at above, but for a plain timestamp with no
+    per-platform special-casing (there's no source platform for "when
+    did /refresh last run") and WITH minutes, unlike posted_at's
+    hour-only style - precision matters more here since refreshes can
+    happen minutes apart on the same day, not just at different hours.
+    Style: "2 Sep, 11:47pm".
+    """
+    if dt is None:
+        return None
+    dt_ist = dt.astimezone(_IST)
+    hour_12 = dt_ist.hour % 12 or 12
+    am_pm = "am" if dt_ist.hour < 12 else "pm"
+    return f"{dt_ist.day} {dt_ist.strftime('%b')}, {hour_12}:{dt_ist.minute:02d}{am_pm}"
+
+
+def _get_last_refreshed_at(db: Session) -> str | None:
+    """Shared by every jobs-listing endpoint below - reads the single RefreshLog row (see models.py) so every user's page load can show "jobs last fetched at ___", not just whoever's browser happened to trigger the last refresh."""
+    log = db.get(RefreshLog, 1)
+    return _format_ist_datetime(log.refreshed_at) if log is not None else None
+
+
 def _to_job_out(job: Job, status: JobStatus | None) -> JobOut:
     """Shared by every jobs-listing endpoint below - one place that turns a Job row (plus this specific user's status, if any) into the response shape, so the four endpoints below can't quietly drift into returning different shapes for the same underlying data."""
     return JobOut(
@@ -267,7 +303,7 @@ def _user_statuses_by_job_id(db: Session, user: User) -> dict:
 
 
 @app.post("/refresh", response_model=RefreshSummary)
-def refresh_jobs(user: User = Depends(get_current_user)):
+def refresh_jobs(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """
     THE ONLY ENDPOINT THAT ACTUALLY FETCHES ANYTHING. Runs the full
     live pipeline right now - every company, filtered to jobs posted
@@ -292,6 +328,17 @@ def refresh_jobs(user: User = Depends(get_current_user)):
     this stays a shared action, not scoped to who triggered it.
     """
     result = ingest_relevant_jobs()
+
+    # Upsert the single RefreshLog row (fixed id=1) so every user's
+    # next GET /jobs (see _get_last_refreshed_at above) reflects this
+    # run, not just whoever's browser triggered it.
+    log = db.get(RefreshLog, 1)
+    if log is not None:
+        log.refreshed_at = datetime.now(timezone.utc)
+    else:
+        db.add(RefreshLog(id=1, refreshed_at=datetime.now(timezone.utc)))
+    db.commit()
+
     return RefreshSummary(**result)
 
 
@@ -346,7 +393,10 @@ def get_all_jobs(db: Session = Depends(get_db), user: User = Depends(get_current
     """
     jobs = _newest_first(_within_freshness_window(db.query(Job))).all()
     statuses = _user_statuses_by_job_id(db, user)
-    return JobsListResponse(jobs=[_to_job_out(j, statuses.get(j.id)) for j in jobs])
+    return JobsListResponse(
+        jobs=[_to_job_out(j, statuses.get(j.id)) for j in jobs],
+        last_refreshed_at=_get_last_refreshed_at(db),
+    )
 
 
 @app.get("/jobs/mine", response_model=JobsListResponse)
@@ -358,7 +408,10 @@ def get_my_jobs(db: Session = Depends(get_db), user: User = Depends(get_current_
         .filter(UserJob.user_id == user.id, UserJob.status == JobStatus.applied)
         .all()
     )
-    return JobsListResponse(jobs=[_to_job_out(j, JobStatus.applied) for j in jobs])
+    return JobsListResponse(
+        jobs=[_to_job_out(j, JobStatus.applied) for j in jobs],
+        last_refreshed_at=_get_last_refreshed_at(db),
+    )
 
 
 @app.get("/jobs/saved", response_model=JobsListResponse)
@@ -370,7 +423,32 @@ def get_saved_jobs(db: Session = Depends(get_db), user: User = Depends(get_curre
         .filter(UserJob.user_id == user.id, UserJob.status == JobStatus.saved)
         .all()
     )
-    return JobsListResponse(jobs=[_to_job_out(j, JobStatus.saved) for j in jobs])
+    return JobsListResponse(
+        jobs=[_to_job_out(j, JobStatus.saved) for j in jobs],
+        last_refreshed_at=_get_last_refreshed_at(db),
+    )
+
+
+@app.get("/jobs/rejected", response_model=JobsListResponse)
+def get_rejected_jobs(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """
+    "Rejected" tab (added 2026-09-03) - same idea as GET /jobs/mine and
+    GET /jobs/saved above, filtered to status == rejected, and same "no
+    time filter" treatment - a job you actually applied to and got
+    rejected from is exactly the kind of thing worth tracking long past
+    its original 24-hour posting window, not something that should
+    silently vanish once the posting itself ages out.
+    """
+    jobs = (
+        _newest_first(db.query(Job))
+        .join(UserJob, UserJob.job_id == Job.id)
+        .filter(UserJob.user_id == user.id, UserJob.status == JobStatus.rejected)
+        .all()
+    )
+    return JobsListResponse(
+        jobs=[_to_job_out(j, JobStatus.rejected) for j in jobs],
+        last_refreshed_at=_get_last_refreshed_at(db),
+    )
 
 
 @app.get("/jobs/archived", response_model=JobsListResponse)
@@ -394,7 +472,10 @@ def get_archived_jobs(db: Session = Depends(get_db), user: User = Depends(get_cu
         .filter(UserJob.user_id == user.id, UserJob.status == JobStatus.not_interested)
         .all()
     )
-    return JobsListResponse(jobs=[_to_job_out(j, JobStatus.not_interested) for j in jobs])
+    return JobsListResponse(
+        jobs=[_to_job_out(j, JobStatus.not_interested) for j in jobs],
+        last_refreshed_at=_get_last_refreshed_at(db),
+    )
 
 
 @app.post("/jobs/{job_id}/status")
@@ -406,15 +487,69 @@ def set_job_status(
 ):
     """
     Sets (or changes) the current user's status on one job - saved,
-    applied, or not_interested. A single status field, not independent
-    flags (see UserJob's own docstring in models.py) - marking a job
-    Applied after it was Saved simply overwrites the Saved status,
-    it doesn't keep both true at once.
+    applied, not_interested, or rejected. A single status field, not
+    independent flags (see UserJob's own docstring in models.py) -
+    marking a job Applied after it was Saved simply overwrites the
+    Saved status, it doesn't keep both true at once.
 
     UPSERT: creates a new user_jobs row if this user has never acted
     on this job before, or updates the existing one in place if they
     have - either way there's still only ever at most one status per
     (user, job) pair.
+
+    `rejected` is GATED (added 2026-09-03, Aman's own explicit call):
+    unlike the other three statuses, which are freely settable from
+    any prior state, a job can only be marked rejected if its CURRENT
+    status is already `applied` - "Rejected" only makes sense for a
+    job the user actually applied to, not one they only saved or
+    haven't acted on at all. Enforced HERE, not just by hiding the
+    button in the frontend (see JobCard.tsx) - the frontend gate is
+    for a good default UX, this one is what actually stops a client
+    that skips it.
+    """
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    existing = (
+        db.query(UserJob)
+        .filter(UserJob.user_id == user.id, UserJob.job_id == job_id)
+        .first()
+    )
+
+    if payload.status == JobStatus.rejected and (existing is None or existing.status != JobStatus.applied):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A job must be marked Applied before it can be marked Rejected",
+        )
+
+    if existing is not None:
+        existing.status = payload.status
+    else:
+        db.add(UserJob(user_id=user.id, job_id=job_id, status=payload.status))
+    db.commit()
+    return {"job_id": job_id, "status": payload.status.value}
+
+
+@app.delete("/jobs/{job_id}/status")
+def clear_job_status(
+    job_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    Clears the current user's status on one job - the "toggle off"
+    counterpart to set_job_status above, for when a status was set by
+    mistake (e.g. clicking Not Interested again to undo it).
+
+    Consistent with this schema's existing convention (see UserJob's
+    docstring in models.py): "no status" is represented by the ABSENCE
+    of a user_jobs row, not by some fourth "none" enum value - so
+    clearing means deleting the row outright, not overwriting it.
+
+    Idempotent: clearing a status that was never set (no row exists)
+    still returns success, same as DELETE semantics for any resource
+    that's already gone.
     """
     job = db.get(Job, job_id)
     if job is None:
@@ -426,10 +561,8 @@ def set_job_status(
         .first()
     )
     if existing is not None:
-        existing.status = payload.status
-    else:
-        db.add(UserJob(user_id=user.id, job_id=job_id, status=payload.status))
-    db.commit()
-    return {"job_id": job_id, "status": payload.status.value}
+        db.delete(existing)
+        db.commit()
+    return {"job_id": job_id, "status": None}
 
 

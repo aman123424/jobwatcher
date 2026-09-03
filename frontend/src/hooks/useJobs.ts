@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   UnauthorizedError,
+  clearJobStatus,
   fetchAllJobs,
   fetchArchivedJobs,
   fetchMyJobs,
+  fetchRejectedJobs,
   fetchSavedJobs,
   refreshJobs,
   setJobStatus,
@@ -11,13 +13,14 @@ import {
 import type { JobOut, JobStatus, JobsListResponse } from "../api/types";
 import { useAuth } from "./useAuth";
 
-export type JobsTab = "all" | "mine" | "saved" | "archived";
+export type JobsTab = "all" | "mine" | "saved" | "rejected" | "archived";
 
 /** Maps each tab to the GET call that serves it - one lookup table rather than an if/else, so adding another tab later (e.g. "Good Matches") is a one-line addition here, not a change to the loading logic itself. */
 const TAB_FETCHERS: Record<JobsTab, (token: string) => Promise<JobsListResponse>> = {
   all: fetchAllJobs,
   mine: fetchMyJobs,
   saved: fetchSavedJobs,
+  rejected: fetchRejectedJobs,
   archived: fetchArchivedJobs,
 };
 
@@ -25,6 +28,7 @@ const TAB_FETCHERS: Record<JobsTab, (token: string) => Promise<JobsListResponse>
 const TAB_STATUS: Record<Exclude<JobsTab, "all">, JobStatus> = {
   mine: "applied",
   saved: "saved",
+  rejected: "rejected",
   archived: "not_interested",
 };
 
@@ -47,15 +51,30 @@ export function useJobs() {
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A SEPARATE error slot from `error` above, deliberately - `error`
+  // gates JobList's whole render (see JobList.tsx: it shows an error
+  // message INSTEAD of the list), which is correct when the list
+  // itself failed to load, but very wrong for a single optimistic
+  // status update failing in the background - that should roll back
+  // just that one job and show a small dismissable notice, not blank
+  // out a list of jobs the user is still actively looking at.
+  const [statusError, setStatusError] = useState<string | null>(null);
+  // A shared/global value straight from the backend (see
+  // JobsListResponse in api/types.ts) - every jobs-listing endpoint
+  // returns it, so it stays current after every tab switch too, not
+  // just right after clicking Refresh.
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
 
   const loadTab = useCallback(
     async (nextTab: JobsTab) => {
       if (!token) return;
       setIsLoading(true);
       setError(null);
+      setStatusError(null);
       try {
         const data = await TAB_FETCHERS[nextTab](token);
         setJobs(data.jobs);
+        setLastRefreshedAt(data.last_refreshed_at);
       } catch (err) {
         if (err instanceof UnauthorizedError) {
           // The token's expired or otherwise invalid - logout() clears
@@ -79,42 +98,76 @@ export function useJobs() {
   }, [tab, loadTab]);
 
   const updateStatus = useCallback(
-    async (jobId: string, status: JobStatus) => {
+    (jobId: string, status: JobStatus | null) => {
       if (!token) return;
-      try {
-        await setJobStatus(token, jobId, status);
-        // Update local state directly instead of re-fetching the whole
-        // tab (FIXED 2026-09-02 - a real bug Aman caught: re-fetching
-        // briefly showed JobList's "Loading…" placeholder, collapsing
-        // the page's height and forcing the browser to reset scroll
-        // position, since there was nothing left to scroll TO for a
-        // moment. A local update never removes the list from the DOM
-        // at all, so there's nothing to reset scroll against - and
-        // it's also just cheaper, no extra round-trip to the backend.
-        //
-        // "all" keeps every job, just updates the one that changed.
-        // Every other tab only keeps a job if its NEW status still
-        // matches what that tab shows (see TAB_STATUS above) -
-        // otherwise the job no longer belongs here and disappears,
-        // the same real behavior as before, just computed locally.
+      const index = jobs.findIndex((j) => j.job_id === jobId);
+      if (index === -1) return;
+      const originalJob = jobs[index];
+
+      // The caller (JobCard's status dropdown, or its tab-specific
+      // Rejected/Mark as Applied button - see JobCard.tsx) always
+      // states its intent explicitly now: a real JobStatus to SET, or
+      // `null` to CLEAR back to no status at all (picking "No status"
+      // from the dropdown). No more auto-detecting "clicking the same
+      // button again means clear" (REWORKED 2026-09-03, replacing the
+      // three separate status BUTTONS with one <select> - a native
+      // dropdown doesn't fire a change event for re-selecting the
+      // option that's already chosen, so that old convention couldn't
+      // carry over as-is; making intent explicit is also just clearer).
+      //
+      // OPTIMISTIC UPDATE (Aman's own call - "just like Instagram's
+      // like button"): the UI changes THE INSTANT the dropdown/button
+      // is used, not after the API call resolves. This is also what
+      // fixed a real scroll-position bug Aman caught earlier
+      // (re-fetching the tab briefly showed a "Loading…" placeholder,
+      // collapsing the page and resetting scroll) - updating local
+      // state directly never removes the list from the DOM at all.
+      //
+      // "all" keeps every job, just updates the one that changed.
+      // Every other tab only keeps a job if its NEW status still
+      // matches what that tab shows (see TAB_STATUS above) - a clear,
+      // or a switch to a different status, never matches any tab's
+      // own status, so it naturally falls through to the same "no
+      // longer belongs here" removal.
+      setJobs((prev) => {
+        if (tab === "all") {
+          return prev.map((j) => (j.job_id === jobId ? { ...j, status } : j));
+        }
+        if (status === TAB_STATUS[tab]) {
+          return prev.map((j) => (j.job_id === jobId ? { ...j, status } : j));
+        }
+        return prev.filter((j) => j.job_id !== jobId);
+      });
+
+      // The actual API call happens IN THE BACKGROUND, deliberately
+      // not awaited before the UI update above - callers don't wait on
+      // this promise either, so a slow network never blocks the
+      // dropdown/button from feeling instant.
+      setStatusError(null);
+      const request = status === null ? clearJobStatus(token, jobId) : setJobStatus(token, jobId, status);
+      request.catch((err) => {
+        // The backend call failed - undo exactly this one optimistic
+        // change (put the job's status, or the job itself if the
+        // update had removed it from this tab, back the way it was)
+        // rather than reverting to a stale full-list snapshot, which
+        // would also wipe out any OTHER status change the user made on
+        // a different job while this request was still in flight.
         setJobs((prev) => {
-          if (tab === "all") {
-            return prev.map((j) => (j.job_id === jobId ? { ...j, status } : j));
+          if (prev.some((j) => j.job_id === jobId)) {
+            return prev.map((j) => (j.job_id === jobId ? originalJob : j));
           }
-          if (status === TAB_STATUS[tab]) {
-            return prev.map((j) => (j.job_id === jobId ? { ...j, status } : j));
-          }
-          return prev.filter((j) => j.job_id !== jobId);
+          const restored = [...prev];
+          restored.splice(Math.min(index, restored.length), 0, originalJob);
+          return restored;
         });
-      } catch (err) {
         if (err instanceof UnauthorizedError) {
           logout();
           return;
         }
-        setError(err instanceof Error ? err.message : "Failed to update status.");
-      }
+        setStatusError(err instanceof Error ? err.message : "Failed to update status.");
+      });
     },
-    [token, tab, logout],
+    [token, tab, jobs, logout],
   );
 
   const refresh = useCallback(async () => {
@@ -141,5 +194,5 @@ export function useJobs() {
     }
   }, [token, tab, loadTab, logout]);
 
-  return { tab, setTab, jobs, isLoading, isRefreshing, error, updateStatus, refresh };
+  return { tab, setTab, jobs, isLoading, isRefreshing, error, statusError, updateStatus, refresh, lastRefreshedAt };
 }

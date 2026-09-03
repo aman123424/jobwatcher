@@ -28,8 +28,14 @@ export interface LoginPayload {
   password: string;
 }
 
-/** The three states a user can put a job into - mirrors backend/models.py's JobStatus enum exactly. */
-export type JobStatus = "saved" | "applied" | "not_interested";
+/**
+ * The states a user can put a job into - mirrors backend/models.py's
+ * JobStatus enum exactly. `rejected` is GATED, not freely settable
+ * like the other three - the backend only allows it when a job's
+ * CURRENT status is already `applied` (see api.py's set_job_status),
+ * and JobCard.tsx only shows the button at all once that's true.
+ */
+export type JobStatus = "saved" | "applied" | "not_interested" | "rejected";
 
 /**
  * Mirrors backend/api.py's JobOut Pydantic model field-for-field.
@@ -55,6 +61,8 @@ export interface JobOut {
 
 export interface JobsListResponse {
   jobs: JobOut[];
+  /** When POST /refresh last actually ran, already formatted (e.g. "2 Sep, 11:47pm") - a shared/global value, the same for every user, not scoped to who triggered it. Null only on a database that's never been refreshed at all. */
+  last_refreshed_at: string | null;
 }
 
 /** Mirrors backend/api.py's RefreshSummary Pydantic model - what POST /refresh returns (counts, not the jobs themselves). */
