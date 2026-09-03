@@ -2,11 +2,13 @@ import type {
   AuthResponse,
   CompanyOut,
   CreateCompanyPayload,
+  JobScoreOut,
   JobsListResponse,
   JobStatus,
   LoginPayload,
   RefreshSummary,
   RegisterPayload,
+  SetJobScorePayload,
 } from "./types";
 
 /**
@@ -194,5 +196,19 @@ export function deleteCompany(token: string, companyId: string): Promise<void> {
   return request<void>(`/companies/${companyId}`, {
     method: "DELETE",
     headers: authHeaders(token),
+  });
+}
+
+/** GET /jobs/{id}/score - admin-only; returns the admin's existing score for this job, or computes one lazily via scoring.py's score_job() on first call. */
+export function fetchJobScore(token: string, jobId: string): Promise<JobScoreOut> {
+  return request<JobScoreOut>(`/jobs/${jobId}/score`, { headers: authHeaders(token) });
+}
+
+/** PUT /jobs/{id}/score - admin-only; saves the admin's own corrected score/reasoning, marking it "reviewed" (see JobScoreSource in backend/models.py) - the real training signal, not the auto-generated baseline. */
+export function saveJobScore(token: string, jobId: string, payload: SetJobScorePayload): Promise<JobScoreOut> {
+  return request<JobScoreOut>(`/jobs/${jobId}/score`, {
+    method: "PUT",
+    headers: { ...authHeaders(token), "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
   });
 }

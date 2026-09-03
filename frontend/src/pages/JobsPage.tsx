@@ -2,6 +2,7 @@ import { useState } from "react";
 import { AppHeader } from "../components/AppHeader";
 import { JobList } from "../components/JobList";
 import { JobsTabs } from "../components/JobsTabs";
+import "./JobsPage.scss";
 import { useJobs } from "../hooks/useJobs";
 
 /**

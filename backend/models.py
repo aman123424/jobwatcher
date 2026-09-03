@@ -125,6 +125,23 @@ class JobStatus(str, enum.Enum):
     rejected = "rejected"
 
 
+class JobScoreSource(str, enum.Enum):
+    """
+    Where a JobScore row's current value came from - lets a future
+    training pipeline tell a real, human-verified label apart from an
+    unreviewed placeholder, without needing a separate "is this
+    trustworthy" column. `auto` rows are scoring.py's score_job()
+    output, computed lazily the first time a job's score page is
+    opened - a cheap, imperfect baseline, not a real label. `reviewed`
+    means the admin has actually looked at it and saved their own
+    score/reasoning (typically pasted in from asking Claude directly,
+    see api.py's PUT /jobs/{id}/score) - THIS is the real, trustworthy
+    training signal the eventual classifier gets trained on.
+    """
+    auto = "auto"
+    reviewed = "reviewed"
+
+
 # =============================================================================
 # Tables
 # =============================================================================
@@ -363,6 +380,80 @@ class UserJob(Base):
 
     user: Mapped["User"] = relationship(back_populates="user_jobs")
     job: Mapped["Job"] = relationship(back_populates="user_jobs")
+
+
+class JobScore(Base):
+    """
+    A resume-fit score + written reasoning for one (user, job) pair -
+    added 2026-09-04 as the bootstrap-and-correct data pipeline toward
+    a real trained resume-matching classifier (see project log/memory
+    for the full plan). Deliberately its OWN table, per (user, job),
+    same shape as UserJob - NOT a column on the shared `jobs` table,
+    because a match score is inherently resume-specific: the exact
+    same posting scores completely differently for two different
+    people's resumes, so it can never be a fact that lives on the one
+    shared Job row every user reads (the same architectural principle
+    `status` already follows, see UserJob's own docstring above).
+
+    Admin-only for now (api.py's endpoints gate on get_current_admin) -
+    only Aman's own resume is behind scoring.py's RESUME_SKILLS right
+    now, so a score here is only ever meaningful for his account. The
+    table itself is already shaped generically per-user, though, so
+    real per-user scoring (once every user has their own resume
+    profile) is a data-population problem at that point, not a schema
+    change.
+    """
+    __tablename__ = "job_scores"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), primary_key=True
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id"), primary_key=True
+    )
+    score: Mapped[int] = mapped_column(Integer, nullable=False)
+    reasoning: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[JobScoreSource] = mapped_column(nullable=False)
+    updated_at: Mapped["DateTime"] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    user: Mapped["User"] = relationship()
+    job: Mapped["Job"] = relationship()
+
+
+class TrainingExample(Base):
+    """
+    A standalone (JD text, score, reasoning) example for training the
+    eventual resume-fit classifier - deliberately NOT a `jobs`/
+    `job_scores` row. Added 2026-09-04, replacing a first attempt that
+    force-fit Aman's 35 hand-scored JDs into real `Job`/`Company` rows
+    just to satisfy JobScore's foreign key - the wrong shape for what
+    these actually are: closed, days-old postings scored OUTSIDE the
+    live app (by asking Claude directly), not real current listings
+    that belong in the shared job feed. JobScore itself stays exactly
+    as it was - it's still the right table for the live "score a real,
+    currently-listed job" feature (JobCard's score badge ->
+    JobScorePage), which genuinely needs to know WHICH job it's
+    scoring. This table is for training data ONLY, never rendered as
+    a job listing anywhere, never touches ingest.py/api.py's jobs
+    pipeline at all - just a plain corpus for a future training script
+    to read directly.
+    """
+    __tablename__ = "training_examples"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    jd_text: Mapped[str] = mapped_column(Text, nullable=False)
+    score: Mapped[int] = mapped_column(Integer, nullable=False)
+    reasoning: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped["DateTime"] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    user: Mapped["User"] = relationship()
 
 
 class RefreshLog(Base):

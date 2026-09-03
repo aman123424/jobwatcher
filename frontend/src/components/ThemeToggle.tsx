@@ -1,3 +1,4 @@
+import "./ThemeToggle.scss";
 import { useTheme } from "../hooks/useTheme";
 
 /**

@@ -1,0 +1,260 @@
+// shared.scss
+// ===========
+//
+// Classes genuinely used by MORE THAN ONE component - split out of the
+// old single App.css (2026-09-04, Aman's own call: one growing global
+// file was becoming unreadable clutter). Everything here stays global
+// on purpose rather than being force-split into single-owner files,
+// since duplicating identical rules across several component .scss
+// files would trade one kind of clutter for a worse one (the same
+// CSS, copy-pasted in N places, silently drifting apart over time).
+// Imported ONCE, in App.tsx, so every component below can just use
+// these class names directly without importing anything itself.
+//
+// Everything else - a class used by exactly one component - lives in
+// that component's own co-located ComponentName.scss instead.
+
+// --- Auth-style form (LoginPage, RegisterPage, CompanyForm) ---
+
+.auth-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100svh;
+  padding: 24px;
+  box-sizing: border-box;
+}
+
+.auth-form {
+  width: 100%;
+  max-width: 380px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  text-align: left;
+
+  h1 {
+    margin: 0;
+    font-size: 32px;
+  }
+
+  label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 14px;
+    color: var(--text-h);
+  }
+
+  input {
+    font: inherit;
+    font-size: 16px;
+    color: var(--text-h);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+
+    &:focus {
+      outline: none;
+      border-color: var(--accent-border);
+    }
+  }
+
+  button[type="submit"] {
+    font: inherit;
+    font-weight: 600;
+    font-size: 16px;
+    color: #fff;
+    background: var(--accent);
+    border: none;
+    border-radius: 8px;
+    padding: 12px;
+    margin-top: 8px;
+    cursor: pointer;
+
+    &:disabled {
+      opacity: 0.6;
+      cursor: wait;
+    }
+
+    &:not(:disabled):hover {
+      filter: brightness(1.08);
+    }
+  }
+}
+
+.auth-subtitle {
+  color: var(--text);
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.auth-error {
+  color: #e5484d;
+  font-size: 14px;
+  margin: 0;
+}
+
+.auth-success {
+  color: #30a46c;
+  font-size: 14px;
+  margin: 0;
+}
+
+.auth-switch {
+  text-align: center;
+  font-size: 14px;
+  color: var(--text);
+  margin: 8px 0 0;
+
+  a {
+    color: var(--accent);
+    text-decoration: none;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+}
+
+// --- Page shell (JobsPage, CompaniesPage, ProfilePage, EditCompanyPage, JobScorePage) ---
+
+.jobs-page {
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px 24px 48px;
+  box-sizing: border-box;
+  text-align: left;
+}
+
+// --- Small reused controls ---
+
+.back-link {
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--text-h);
+  }
+}
+
+// Shared dropdown style - the tabs select (JobsTabs.tsx) and the
+// platform select (CompanyForm.tsx) both use this, so they look like
+// the same control rather than one styled and one left as the
+// browser's bare default <select> appearance.
+.select-input {
+  font: inherit;
+  font-size: 14px;
+  color: var(--text-h);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+// --- Refresh/action row + search + tab-dropdown row ---
+// (JobsPage's "Refresh Jobs" row and CompaniesPage's "+ Add Company"
+// row deliberately reuse the exact same classes - CompaniesPage's own
+// design explicitly sits "in place of" JobsPage's row, same visual
+// weight, not a lookalike copy.)
+
+.refresh-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.refresh-button {
+  display: inline-block;
+  font: inherit;
+  font-weight: 600;
+  font-size: 14px;
+  color: #fff;
+  background: var(--accent);
+  border: none;
+  border-radius: 8px;
+  padding: 10px 20px;
+  cursor: pointer;
+  text-decoration: none;
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: wait;
+  }
+
+  &:not(:disabled):hover {
+    filter: brightness(1.08);
+  }
+}
+
+.jobs-filter-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+
+.company-search-input {
+  flex: 1;
+  font: inherit;
+  font-size: 14px;
+  color: var(--text-h);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 14px;
+
+  &:focus {
+    outline: none;
+    border-color: var(--accent-border);
+  }
+}
+
+.status-error-banner {
+  color: #e5484d;
+  font-size: 14px;
+  background: rgba(229, 72, 77, 0.1);
+  border: 1px solid rgba(229, 72, 77, 0.3);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 0 0 16px;
+}
+
+// --- List loading/error/empty status text ---
+// (Despite the "job-list" name, JobList.tsx isn't the only user -
+// CompaniesPage, EditCompanyPage, and JobScorePage all reuse this
+// same "one line of status text" pattern for their own loading/error/
+// empty states, not just the jobs list specifically.)
+
+.job-list-status {
+  color: var(--text);
+  padding: 32px 0;
+}
+
+.job-list-error {
+  color: #e5484d;
+}
+
+.job-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+// --- Job/company name line ---
+// (JobCard's own byline, reused as-is on JobScorePage's detail view.)
+
+.job-company {
+  color: var(--text);
+  font-size: 14px;
+  margin: 0;
+}

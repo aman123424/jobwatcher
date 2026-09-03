@@ -1,3 +1,4 @@
+import "./AppHeader.scss";
 import { AvatarMenu } from "./AvatarMenu";
 import { ThemeToggle } from "./ThemeToggle";
 import { useAuth } from "../hooks/useAuth";

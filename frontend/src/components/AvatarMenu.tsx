@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import "./AvatarMenu.scss";
 import { useAuth } from "../hooks/useAuth";
 import { getInitials } from "../utils/initials";
 

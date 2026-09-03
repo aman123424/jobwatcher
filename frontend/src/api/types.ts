@@ -59,6 +59,8 @@ export interface JobOut {
   years_experience_required: number | null;
   posted_at: string | null;
   status: JobStatus | null;
+  /** Admin-only resume-fit score (0-100) - see api.py's JobOut.score docstring. Always null for a non-admin, and null for an admin too until that job's score page has been opened at least once (computed lazily). */
+  score: number | null;
 }
 
 export interface JobsListResponse {
@@ -111,4 +113,28 @@ export interface CompanyOut {
   name: string;
   platform: string;
   slug: string;
+}
+
+/**
+ * One job's resume-fit score/reasoning, as the admin-only score page
+ * sees it - mirrors backend/api.py's JobScoreOut. `source` tells the
+ * page whether this is still scoring.py's unreviewed "auto" baseline
+ * or something the admin has actually looked at and saved themselves
+ * ("reviewed") - see JobScoreSource's own docstring in backend/models.py.
+ */
+export interface JobScoreOut {
+  job_id: string;
+  title: string;
+  company_name: string;
+  link: string;
+  raw_description: string | null;
+  score: number;
+  reasoning: string;
+  source: "auto" | "reviewed";
+}
+
+/** What PUT /jobs/{id}/score expects - mirrors backend/api.py's SetJobScoreRequest. */
+export interface SetJobScorePayload {
+  score: number;
+  reasoning: string;
 }

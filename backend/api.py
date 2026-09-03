@@ -138,8 +138,9 @@ from auth import get_current_admin, get_current_user
 from auth_routes import router as auth_router
 from db import get_db
 from ingest import ingest_relevant_jobs
-from models import Company, Job, JobStatus, Platform, RefreshLog, User, UserJob
-from scoring import REFRESH_WINDOW_HOURS
+from models import Company, Job, JobScore, JobScoreSource, JobStatus, Platform, RefreshLog, TrainingExample, User, UserJob
+from scoring import REFRESH_WINDOW_HOURS, score_job
+from scoring import _strip_html as strip_html_for_display
 
 app = FastAPI(
     title="jobwatch API",
@@ -216,6 +217,13 @@ class JobOut(BaseModel):
     years_experience_required: int | None
     posted_at: str | None
     status: str | None
+    # Admin-only resume-fit score (see models.py's JobScore) - always
+    # None for a non-admin user (the backend never even queries for it
+    # in that case, see _admin_scores_by_job_id below), and None for an
+    # admin too until that specific job's score has actually been
+    # computed at least once (lazily, on first visit to its score page
+    # - see GET /jobs/{id}/score).
+    score: int | None = None
 
 
 class JobsListResponse(BaseModel):
@@ -303,7 +311,7 @@ def _get_last_refreshed_at(db: Session) -> str | None:
     return _format_ist_datetime(log.refreshed_at) if log is not None else None
 
 
-def _to_job_out(job: Job, status: JobStatus | None) -> JobOut:
+def _to_job_out(job: Job, status: JobStatus | None, score: int | None = None) -> JobOut:
     """Shared by every jobs-listing endpoint below - one place that turns a Job row (plus this specific user's status, if any) into the response shape, so the four endpoints below can't quietly drift into returning different shapes for the same underlying data."""
     return JobOut(
         job_id=str(job.id),
@@ -315,6 +323,7 @@ def _to_job_out(job: Job, status: JobStatus | None) -> JobOut:
         years_experience_required=job.yoe,
         posted_at=_format_posted_at(job.posted_at, job.company.platform),
         status=status.value if status else None,
+        score=score,
     )
 
 
@@ -322,6 +331,20 @@ def _user_statuses_by_job_id(db: Session, user: User) -> dict:
     """One query for ALL of this user's user_jobs rows, turned into a {job_id: status} lookup - used by GET /jobs so attaching status to N jobs costs one query total, not one query per job."""
     rows = db.query(UserJob).filter(UserJob.user_id == user.id).all()
     return {row.job_id: row.status for row in rows}
+
+
+def _admin_scores_by_job_id(db: Session, user: User) -> dict:
+    """
+    Same one-query-for-everything pattern as _user_statuses_by_job_id
+    above, for JobScore instead of UserJob. Returns {} immediately for
+    a non-admin WITHOUT querying at all - job_scores is admin-only data
+    (see JobScore's own docstring in models.py), so there's no reason
+    to pay for this query on every regular user's job-list load.
+    """
+    if not user.is_admin:
+        return {}
+    rows = db.query(JobScore).filter(JobScore.user_id == user.id).all()
+    return {row.job_id: row.score for row in rows}
 
 
 @app.post("/refresh", response_model=RefreshSummary)
@@ -415,8 +438,9 @@ def get_all_jobs(db: Session = Depends(get_db), user: User = Depends(get_current
     """
     jobs = _newest_first(_within_freshness_window(db.query(Job))).all()
     statuses = _user_statuses_by_job_id(db, user)
+    scores = _admin_scores_by_job_id(db, user)
     return JobsListResponse(
-        jobs=[_to_job_out(j, statuses.get(j.id)) for j in jobs],
+        jobs=[_to_job_out(j, statuses.get(j.id), scores.get(j.id)) for j in jobs],
         last_refreshed_at=_get_last_refreshed_at(db),
     )
 
@@ -443,8 +467,9 @@ def get_new_jobs(db: Session = Depends(get_db), user: User = Depends(get_current
         .filter(~Job.id.in_(acted_job_ids))
         .all()
     )
+    scores = _admin_scores_by_job_id(db, user)
     return JobsListResponse(
-        jobs=[_to_job_out(j, None) for j in jobs],
+        jobs=[_to_job_out(j, None, scores.get(j.id)) for j in jobs],
         last_refreshed_at=_get_last_refreshed_at(db),
     )
 
@@ -458,8 +483,9 @@ def get_my_jobs(db: Session = Depends(get_db), user: User = Depends(get_current_
         .filter(UserJob.user_id == user.id, UserJob.status == JobStatus.applied)
         .all()
     )
+    scores = _admin_scores_by_job_id(db, user)
     return JobsListResponse(
-        jobs=[_to_job_out(j, JobStatus.applied) for j in jobs],
+        jobs=[_to_job_out(j, JobStatus.applied, scores.get(j.id)) for j in jobs],
         last_refreshed_at=_get_last_refreshed_at(db),
     )
 
@@ -473,8 +499,9 @@ def get_saved_jobs(db: Session = Depends(get_db), user: User = Depends(get_curre
         .filter(UserJob.user_id == user.id, UserJob.status == JobStatus.saved)
         .all()
     )
+    scores = _admin_scores_by_job_id(db, user)
     return JobsListResponse(
-        jobs=[_to_job_out(j, JobStatus.saved) for j in jobs],
+        jobs=[_to_job_out(j, JobStatus.saved, scores.get(j.id)) for j in jobs],
         last_refreshed_at=_get_last_refreshed_at(db),
     )
 
@@ -495,8 +522,9 @@ def get_rejected_jobs(db: Session = Depends(get_db), user: User = Depends(get_cu
         .filter(UserJob.user_id == user.id, UserJob.status == JobStatus.rejected)
         .all()
     )
+    scores = _admin_scores_by_job_id(db, user)
     return JobsListResponse(
-        jobs=[_to_job_out(j, JobStatus.rejected) for j in jobs],
+        jobs=[_to_job_out(j, JobStatus.rejected, scores.get(j.id)) for j in jobs],
         last_refreshed_at=_get_last_refreshed_at(db),
     )
 
@@ -522,8 +550,9 @@ def get_archived_jobs(db: Session = Depends(get_db), user: User = Depends(get_cu
         .filter(UserJob.user_id == user.id, UserJob.status == JobStatus.not_interested)
         .all()
     )
+    scores = _admin_scores_by_job_id(db, user)
     return JobsListResponse(
-        jobs=[_to_job_out(j, JobStatus.not_interested) for j in jobs],
+        jobs=[_to_job_out(j, JobStatus.not_interested, scores.get(j.id)) for j in jobs],
         last_refreshed_at=_get_last_refreshed_at(db),
     )
 
@@ -762,9 +791,16 @@ def delete_company(company_id: str, db: Session = Depends(get_db), admin: User =
     Company with real Job rows still pointing at it would otherwise
     fail outright on the foreign key constraint. Removing a company
     here means "stop tracking everything about it," so its jobs (and
-    any user_jobs rows referencing those jobs - saved/applied/etc.
-    status other users may have set) go with it, not just the
-    `companies` row itself.
+    any user_jobs/job_scores rows referencing those jobs -
+    saved/applied/etc. status, or a reviewed resume-fit score, other
+    users may have set) go with it, not just the `companies` row
+    itself. job_scores is deliberately included here (added 2026-09-04,
+    after JobScore itself existed) - a reviewed score is real training
+    data (see JobScore's own docstring in models.py), but it's tied to
+    a SPECIFIC job's JD text, which stops existing the moment that
+    job's row is deleted - there's nothing left for the score to be
+    "about" once its job is gone, so keeping the row around orphaned
+    wouldn't preserve anything real.
     """
     company = db.get(Company, company_id)
     if company is None:
@@ -772,8 +808,186 @@ def delete_company(company_id: str, db: Session = Depends(get_db), admin: User =
 
     job_ids = db.query(Job.id).filter(Job.company_id == company_id)
     db.query(UserJob).filter(UserJob.job_id.in_(job_ids)).delete(synchronize_session=False)
+    db.query(JobScore).filter(JobScore.job_id.in_(job_ids)).delete(synchronize_session=False)
     db.query(Job).filter(Job.company_id == company_id).delete(synchronize_session=False)
     db.delete(company)
     db.commit()
+
+
+class JobScoreOut(BaseModel):
+    """
+    A JobScore row (see models.py) plus enough of the underlying job
+    to render its detail/score page without a second fetch - title,
+    company, link, and the raw JD text itself (needed as reference
+    while writing/editing the reasoning - JobOut deliberately never
+    exposes raw_description, since no other part of this app needs
+    the full untouched JD text, just this page does).
+    """
+    job_id: str
+    title: str
+    company_name: str
+    link: str
+    raw_description: str | None
+    score: int
+    reasoning: str
+    source: str
+
+
+class SetJobScoreRequest(BaseModel):
+    score: int
+    reasoning: str
+
+
+def _score_job_row(job: Job) -> tuple[int, str]:
+    """
+    Runs scoring.py's existing score_job() - the original single-user
+    scoring engine, reconnected here rather than reimplemented, since
+    it's already tested against real postings (see PROJECT_LOG.md for
+    the HTML-entity and C#/.NET double-counting bugs it was debugged
+    against) - against ONE job row, for the "auto" baseline a JobScore
+    row starts as (see JobScoreSource's own docstring in models.py).
+    score_job() only ever reads `title`/`raw_description` off the dict
+    it's given, so that's all that needs building here.
+    """
+    scored = score_job({"title": job.title, "raw_description": job.raw_description})
+    return scored["match_score"], scored["match_reason"]
+
+
+def _to_job_score_out(job: Job, job_score: JobScore) -> JobScoreOut:
+    """
+    Shared by GET and PUT /jobs/{id}/score below - one place that
+    combines a Job row with this admin's JobScore row into the
+    response shape. `raw_description` is run through scoring.py's own
+    HTML-tag stripper before being sent - a job posting's HTML is
+    untrusted external content, and JobScorePage.tsx only ever needs
+    it as reference text while writing/editing the reasoning, not as
+    real markup - sending it unstripped would mean either rendering
+    unsanitized third-party HTML in the browser (a real XSS risk) or
+    showing a wall of literal <p> tags, neither of which is worth it
+    here. This is purely a DISPLAY concern - score_job() above still
+    strips (and scores against) the ORIGINAL raw_description itself.
+    """
+    return JobScoreOut(
+        job_id=str(job.id),
+        title=job.title,
+        company_name=job.company.name,
+        link=job.link,
+        raw_description=strip_html_for_display(job.raw_description) if job.raw_description else None,
+        score=job_score.score,
+        reasoning=job_score.reasoning,
+        source=job_score.source.value,
+    )
+
+
+@app.get("/jobs/{job_id}/score", response_model=JobScoreOut)
+def get_job_score(job_id: str, db: Session = Depends(get_db), admin: User = Depends(get_current_admin)):
+    """
+    Admin-only. Returns this admin's existing JobScore for this job if
+    one exists - otherwise computes one right now via score_job()
+    (scoring.py's original resume-matching engine) and stores it as
+    `source="auto"` before returning it. This lazy compute-on-first-view
+    is deliberate (Aman's own call) - scoring every job on every
+    refresh would mean scoring jobs nobody ever actually opens; this
+    way it only ever runs for a job once someone actually clicks in.
+    """
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    existing = (
+        db.query(JobScore)
+        .filter(JobScore.user_id == admin.id, JobScore.job_id == job_id)
+        .first()
+    )
+    if existing is None:
+        score, reasoning = _score_job_row(job)
+        existing = JobScore(
+            user_id=admin.id,
+            job_id=job_id,
+            score=score,
+            reasoning=reasoning,
+            source=JobScoreSource.auto,
+        )
+        db.add(existing)
+        db.commit()
+        db.refresh(existing)
+
+    return _to_job_score_out(job, existing)
+
+
+@app.put("/jobs/{job_id}/score", response_model=JobScoreOut)
+def set_job_score(
+    job_id: str,
+    payload: SetJobScoreRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """
+    Admin-only. Saves the admin's OWN corrected score/reasoning for a
+    job - always marked `source="reviewed"` (see JobScoreSource's own
+    docstring in models.py) regardless of what it was before, since a
+    human deliberately saving a value here is exactly the trustworthy
+    signal the eventual training pipeline needs to be able to tell
+    apart from score_job()'s unreviewed "auto" placeholder guesses.
+    Upserts - works whether or not GET /jobs/{id}/score has been
+    called for this job yet.
+
+    ALSO mirrors into `training_examples` (added 2026-09-04, Aman's
+    own call) - `job_scores` stays the live, job-linked table that
+    powers the actual UI (the score badge only makes sense for a job
+    that's still live, or saved/applied - see JobCard.tsx), while
+    `training_examples` becomes the one permanent place holding every
+    JD this admin has ever actually reviewed, regardless of what later
+    happens to the underlying job/company row (including a company
+    being deleted entirely - see delete_company's own docstring: that
+    cascades job_scores away, but training_examples has no FK to jobs
+    at all, so it survives). Only REVIEWED scores get mirrored, never
+    the unreviewed "auto" baseline from GET above - an unverified
+    guess isn't a real label, and mirroring it here would quietly
+    pollute the one place this whole pipeline needs to stay trustworthy.
+    """
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    existing = (
+        db.query(JobScore)
+        .filter(JobScore.user_id == admin.id, JobScore.job_id == job_id)
+        .first()
+    )
+    if existing is not None:
+        existing.score = payload.score
+        existing.reasoning = payload.reasoning
+        existing.source = JobScoreSource.reviewed
+    else:
+        existing = JobScore(
+            user_id=admin.id,
+            job_id=job_id,
+            score=payload.score,
+            reasoning=payload.reasoning,
+            source=JobScoreSource.reviewed,
+        )
+        db.add(existing)
+
+    # Matched by JD text, not job_id (training_examples deliberately
+    # has no job_id column at all - see its own docstring in models.py)
+    # - re-saving a correction for the same job updates the same
+    # example in place instead of accumulating duplicates.
+    jd_text = strip_html_for_display(job.raw_description) if job.raw_description else job.title
+    example = (
+        db.query(TrainingExample)
+        .filter(TrainingExample.user_id == admin.id, TrainingExample.jd_text == jd_text)
+        .first()
+    )
+    if example is not None:
+        example.score = payload.score
+        example.reasoning = payload.reasoning
+    else:
+        db.add(TrainingExample(user_id=admin.id, jd_text=jd_text, score=payload.score, reasoning=payload.reasoning))
+
+    db.commit()
+    db.refresh(existing)
+
+    return _to_job_score_out(job, existing)
 
 

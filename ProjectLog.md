@@ -1018,6 +1018,94 @@ the real Supabase database afterward.
 
 ---
 
+## Resume-fit scoring reconnected, CSS split into per-component SCSS, and a real training-data pipeline (2026-09-04)
+
+The start of the deferred ML/matching work - not the real trained
+classifier yet (still genuinely not enough data), but the bootstrap-
+and-correct DATA PIPELINE that has to exist before one can be trained
+at all, plus a real UI feature on top of it.
+
+**Resume-fit score reconnected, not rebuilt.** `scoring.py`'s original
+`score_job()` (Aman's own single-user resume-matching engine, disabled
+when the app went multi-user - see the Multi-user architecture section
+above) got a second life as an admin-only feature: a small score badge
+top-right of every `JobCard` (a purple `%` once scored, a neutral
+"Score" placeholder otherwise, invisible entirely to non-admins),
+linking to a new `JobScorePage` showing the JD (HTML stripped for safe
+display, not rendered) beside an editable score + reasoning box. New
+`job_scores` table (per (user, job), same shape as `user_jobs` - a
+score is resume-specific, so it can never be a column on the shared
+`jobs` row, same principle `status` already follows) with a
+`source: auto | reviewed` split - `auto` is `score_job()`'s own
+unreviewed guess, computed LAZILY the first time a job's score page is
+opened (not on every refresh - Aman's own call, no reason to score
+jobs nobody ever looks at); `reviewed` is what a human actually saved,
+the real trustworthy label. **A real bug found via a direct
+question, not testing**: Aman asked whether `DELETE /companies/{id}`
+would still work correctly now that `job_scores` existed - it wouldn't
+have (that endpoint predates `JobScore` and never learned to cascade
+it), fixed before it could ever actually be hit.
+
+**`App.css` split into one `.scss` file per component that needed
+one** (Aman's own call - 679 lines in one file was becoming
+unreadable). `sass` added as a dev dependency; 9 new co-located
+`ComponentName.scss` files, plus one `shared.scss` for classes
+genuinely used by more than one component (the auth-form pattern, the
+page shell, list-status text, the search/refresh row) - duplicating
+those across several files would have traded one kind of clutter for a
+worse one. Verified nothing broke: every one of the original 58
+top-level classes confirmed present in the new files before deleting
+`App.css`, then a full `tsc -b` + `oxlint` + `vite build` pass, then a
+live visual check across login, the jobs page, the avatar dropdown,
+Companies, Profile, and the job-score page - pixel-identical to before.
+
+**The training-data pipeline, worked out in three real iterations, not
+planned perfectly upfront.** Aman had already independently hand-scored
+35 real JDs through a separate Claude conversation (JD text + a score
++ full written reasoning each) and asked whether that could seed
+training data for an eventual classifier - yes, this is real knowledge
+distillation (a bigger model's judgment becoming training labels for a
+small, cheap classifier that can run for free per-job later), and
+crucially it's is a DIFFERENT thing from the seniority-level classifier
+originally discussed (resume-dependent fit, not a resume-independent
+JD label) - see below for the reasoning ML build order kept intact.
+First attempt force-fit all 35 into real `Job`/`Company` rows just to
+satisfy `JobScore`'s foreign key (two new placeholder companies
+created, synthetic `external_job_id`s, backdated `posted_at` so they
+wouldn't leak into any user's live "All Jobs" feed - `_within_freshness_window`
+treats a NULL `posted_at` as "always shown," a real near-miss caught
+and fixed mid-import before anyone could see 28 closed postings
+show up as new). Aman's own correction: these aren't real listings at
+all, they don't need a job/company link, just the JD text + score +
+response. Second iteration: a standalone `training_examples` table
+(`user_id`, `jd_text`, `score`, `reasoning` - no `job_id`, no
+`posted_at`) - the 34 synthetic Job/JobScore/Company rows deleted, all
+34 JDs re-imported clean via `import_training_jds.py` (JD18/Stripe
+deliberately excluded - Claude's own response for it never states a
+numeric score, and fabricating one would inject a fake label into the
+one place this pipeline needs to stay trustworthy). Third iteration:
+`PUT /jobs/{id}/score` now MIRRORS every reviewed correction into
+`training_examples` too (matched/deduped by JD text, since there's no
+job_id to key on) - `job_scores` stays the live table the UI actually
+reads from, `training_examples` becomes the one permanent corpus
+every reviewed score ever lands in, resilient even to the underlying
+job/company later being deleted (which cascades `job_scores` away, but
+never touches `training_examples` at all). Verified live: an unreviewed
+auto-compute correctly does NOT mirror; a reviewed save does; re-saving
+a correction on the same job updates the existing example in place
+instead of duplicating it.
+
+**Deliberately not yet done**: an actual trained model. 34-36 examples
+is real progress but still too little data to trust any classifier's
+generalization - training on this now would risk locking in an
+overfit baseline. Next real step (not started): build the training
+SCRIPT/pipeline itself (TF-IDF + logistic regression, per the earlier-
+agreed scope) as a dry run against the current corpus to validate the
+mechanics, re-run for real once `training_examples` grows past a
+couple hundred rows through normal reviewed-score usage.
+
+---
+
 ## Challenges faced, and how they were actually solved
 
 Documented in the order they happened, including the wrong turns —

@@ -1,4 +1,4 @@
-import "./App.css";
+import "./shared.scss";
 import { Navigate, Route, BrowserRouter as Router, Routes } from "react-router-dom";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { AuthProvider } from "./hooks/useAuth";
@@ -6,6 +6,7 @@ import { ThemeProvider } from "./hooks/useTheme";
 import { AddCompanyPage } from "./pages/AddCompanyPage";
 import { CompaniesPage } from "./pages/CompaniesPage";
 import { EditCompanyPage } from "./pages/EditCompanyPage";
+import { JobScorePage } from "./pages/JobScorePage";
 import { JobsPage } from "./pages/JobsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ProfilePage } from "./pages/ProfilePage";
@@ -64,6 +65,14 @@ function App() {
               element={
                 <ProtectedRoute adminOnly>
                   <EditCompanyPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/jobs/:id/score"
+              element={
+                <ProtectedRoute adminOnly>
+                  <JobScorePage />
                 </ProtectedRoute>
               }
             />

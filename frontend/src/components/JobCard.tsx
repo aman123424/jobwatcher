@@ -1,5 +1,8 @@
 import type { ChangeEvent } from "react";
+import { Link } from "react-router-dom";
+import "./JobCard.scss";
 import type { JobOut, JobStatus } from "../api/types";
+import { useAuth } from "../hooks/useAuth";
 
 interface JobCardProps {
   job: JobOut;
@@ -39,6 +42,8 @@ const STATUS_OPTIONS: { value: JobStatus; label: string }[] = [
  * on every card everywhere.
  */
 export function JobCard({ job, rejectAction, onSetStatus }: JobCardProps) {
+  const { user } = useAuth();
+
   function handleStatusChange(event: ChangeEvent<HTMLSelectElement>) {
     const value = event.target.value;
     onSetStatus(job.job_id, value === "" ? null : (value as JobStatus));
@@ -65,6 +70,21 @@ export function JobCard({ job, rejectAction, onSetStatus }: JobCardProps) {
             {job.location ? ` · ${job.location}` : ""}
           </p>
         </div>
+        {/* Admin-only resume-fit score (2026-09-04) - the backend
+            never sends a score at all to a non-admin (see api.py's
+            JobOut.score docstring), so `user?.is_admin` is really just
+            avoiding a dead link for everyone else, not the real gate.
+            Unscored (job.score === null) still shows as a clickable
+            "Score" placeholder - clicking it is what triggers the
+            lazy score_job() computation on JobScorePage. */}
+        {user?.is_admin && (
+          <Link
+            to={`/jobs/${job.job_id}/score`}
+            className={`job-score-badge${job.score === null ? " job-score-badge-unscored" : ""}`}
+          >
+            {job.score === null ? "Score" : `${job.score}%`}
+          </Link>
+        )}
       </header>
 
       {(job.tech_stack.length > 0 || job.years_experience_required !== null) && (

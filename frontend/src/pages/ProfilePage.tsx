@@ -1,4 +1,6 @@
 import { useNavigate } from "react-router-dom";
+import "../components/AppHeader.scss"; // reuses AppHeader's own header classes for this page's back-button header, without rendering the AppHeader component itself
+import "./ProfilePage.scss";
 import { useAuth } from "../hooks/useAuth";
 
 /**

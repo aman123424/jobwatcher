@@ -1,0 +1,24 @@
+// Styles for the "JobWatcher" title + theme toggle + avatar row -
+// AppHeader.tsx owns rendering this, but ProfilePage.tsx reuses the
+// exact same class names for its own back-button header (it doesn't
+// render the AppHeader component itself, just wants the identical
+// look), so this file gets imported by both.
+
+.jobs-page-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+
+  h1 {
+    margin: 0;
+    font-size: 24px;
+    flex: 1;
+  }
+}
+
+.jobs-page-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}

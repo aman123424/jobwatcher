@@ -1,4 +1,5 @@
 import { useNavigate } from "react-router-dom";
+import "./CompanyCard.scss";
 import type { CompanyOut } from "../api/types";
 
 interface CompanyCardProps {

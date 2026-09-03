@@ -1,0 +1,121 @@
+.job-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 20px;
+}
+
+.job-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.job-title {
+  font-size: 18px;
+  margin: 0 0 2px;
+
+  a {
+    color: var(--text-h);
+    text-decoration: none;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+}
+
+// --- Admin-only resume-fit score badge ---
+
+.job-score-badge {
+  flex-shrink: 0;
+  font: inherit;
+  font-weight: 600;
+  font-size: 13px;
+  color: #fff;
+  background: var(--accent);
+  border-radius: 999px;
+  padding: 5px 12px;
+  text-decoration: none;
+  white-space: nowrap;
+
+  &:hover {
+    filter: brightness(1.08);
+  }
+}
+
+.job-score-badge-unscored {
+  color: var(--text);
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+}
+
+.job-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0;
+}
+
+.job-skill-badge,
+.job-yoe-badge {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-h);
+  background: var(--code-bg);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+
+.job-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.job-posted-date {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.job-status-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.job-status-select {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-h);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+
+.job-status-button {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 12px;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--text-h);
+  }
+
+  &.active {
+    color: #fff;
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+}
