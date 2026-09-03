@@ -76,22 +76,24 @@ export interface RefreshSummary {
   skipped_unknown_company: number;
 }
 
-/** Mirrors backend/models.py's Platform enum exactly - these values ARE fetchers.py's FETCHERS dict keys, so a value outside this list would never actually be fetchable (see api.py's CreateCompanyRequest, which validates against the same enum server-side). */
-export type Platform =
-  | "greenhouse"
-  | "lever"
-  | "ashby"
-  | "smartrecruiters"
-  | "workday"
-  | "pcsx"
-  | "amazon"
-  | "deshaw"
-  | "atlassian";
+/**
+ * The platforms an admin can pick for a NEW company - mirrors backend
+ * api.py's SelfServicePlatform exactly, a deliberately narrower list
+ * than the full Platform enum models.py's Company.platform column
+ * actually allows. amazon/deshaw/atlassian/pcsx are real values on
+ * EXISTING companies (Amazon, DE Shaw, Atlassian, Microsoft), but
+ * their fetchers are hardcoded to that one specific company's own
+ * endpoint (see api.py's own comment on SelfServicePlatform for the
+ * full reasoning) - picking one of those for a genuinely new company
+ * wouldn't add it at all, just silently re-fetch an existing
+ * company's jobs under a different name.
+ */
+export type SelfServicePlatform = "greenhouse" | "lever" | "ashby" | "smartrecruiters" | "workday";
 
 /** What POST /companies expects - mirrors backend/api.py's CreateCompanyRequest. */
 export interface CreateCompanyPayload {
   company_name: string;
-  platform: Platform;
+  platform: SelfServicePlatform;
   slug: string;
 }
 

@@ -22,7 +22,7 @@ export function JobsTabs({ tab, onChange }: JobsTabsProps) {
   }
 
   return (
-    <select className="jobs-tabs-select" value={tab} onChange={handleChange} aria-label="Jobs tab">
+    <select className="select-input" value={tab} onChange={handleChange} aria-label="Jobs tab">
       {TABS.map(({ value, label }) => (
         <option key={value} value={value}>
           {label}

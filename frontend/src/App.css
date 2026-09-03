@@ -306,13 +306,8 @@
 
 /* --- Add Company (admin-only) --- */
 
-.add-company-row {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 8px;
-}
-
 .add-company-button {
+  margin-left: auto;
   font: inherit;
   font-weight: 600;
   font-size: 13px;
@@ -353,7 +348,11 @@
   border-color: var(--accent-border);
 }
 
-.jobs-tabs-select {
+/* Shared dropdown style - the tabs select (JobsTabs.tsx) and the
+   platform select (AddCompanyPage.tsx) both use this, so they look
+   like the same control rather than one styled and one left as the
+   browser's bare default <select> appearance. */
+.select-input {
   font: inherit;
   font-size: 14px;
   color: var(--text-h);

@@ -118,6 +118,7 @@ endpoint with one click, no curl/Postman/frontend needed.
 """
 
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -606,17 +607,31 @@ def clear_job_status(
     return {"job_id": job_id, "status": None}
 
 
+# The subset of Platform (see models.py) an admin can pick for a NEW
+# company through this form - deliberately narrower than the full
+# enum. amazon/deshaw/atlassian/pcsx are already real values on
+# EXISTING companies (Amazon, DE Shaw, Atlassian, Microsoft - see
+# companies.py), so Platform itself still has to include them for
+# those rows' sake, but their fetch_* functions (see fetchers.py) are
+# hardcoded to that ONE specific company's own endpoint - fetch_atlassian
+# ignores its slug argument entirely and always hits Atlassian's own
+# careers feed, no matter what company row points at it. Letting an
+# admin pick one of these for a genuinely NEW company wouldn't add
+# that company at all, it would silently create a row that just
+# re-fetches an existing company's jobs under a different name - a
+# real data-integrity bug, not just an inconvenience. greenhouse,
+# lever, ashby, smartrecruiters, and workday are the ones that are
+# actually generic - any company's own board, addressed by ITS OWN
+# slug - which is what makes them safe for self-service.
+SelfServicePlatform = Literal["greenhouse", "lever", "ashby", "smartrecruiters", "workday"]
+
+
 class CreateCompanyRequest(BaseModel):
     company_name: str
-    # A real Platform enum, not a plain string - FastAPI/Pydantic
-    # rejects anything that isn't one of fetchers.py's actual known
-    # platforms with a clean 422 before this endpoint's own code even
-    # runs. A free-text platform would let an admin create a company
-    # that can NEVER be fetched (FETCHERS[platform] would KeyError
-    # inside ingest.py the moment a refresh tried it) with no
-    # indication anything was wrong until that crash - this closes
-    # that off at the door instead.
-    platform: Platform
+    # SelfServicePlatform (above), NOT the full Platform enum -
+    # FastAPI/Pydantic rejects anything outside that narrower list with
+    # a clean 422 before this endpoint's own code even runs.
+    platform: SelfServicePlatform
     # The platform-specific fetch identifier - format varies a lot by
     # platform (see Company.slug's own docstring in models.py, e.g.
     # Workday's "tenant|wdN|site" vs a plain Greenhouse board slug) -
@@ -657,7 +672,11 @@ def create_company(
             detail="A company with this name already exists",
         )
 
-    company = Company(name=payload.company_name, platform=payload.platform, slug=payload.slug)
+    # payload.platform is a plain string (SelfServicePlatform is a
+    # Literal, not the Platform enum - see its own comment above) -
+    # Company.platform is a real Platform enum column, so it needs
+    # converting back, not passed through as-is.
+    company = Company(name=payload.company_name, platform=Platform(payload.platform), slug=payload.slug)
     db.add(company)
     db.commit()
     db.refresh(company)
