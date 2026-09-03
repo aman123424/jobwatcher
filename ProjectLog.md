@@ -849,6 +849,123 @@ and made the monogram unreadable at actual favicon size.
 
 ---
 
+## Job status UX overhaul, admin company management, and deploy automation (2026-09-02 to 09-04)
+
+A long stretch of UI/workflow polish on the multi-user version above,
+plus one real architecture fix and a genuinely new admin feature -
+each piece live-tested (curl for the backend, a real logged-in browser
+session for the frontend, test users/companies cleaned out of the real
+Supabase DB afterward every time) before being folded into the next.
+
+**Status editing reworked twice, converging on an optimistic,
+dropdown-based design.** First pass: clicking an already-active status
+button again now clears it back to no status (a real `UserJob` row
+deletion, not a fourth "none" enum value - consistent with the
+existing "no row = no status" convention) - Aman's own fix for
+mis-clicking Not Interested. Second pass: status changes became
+OPTIMISTIC - the UI updates the instant a status is picked, the
+`POST`/`DELETE` call happens in the background, not awaited before the
+UI reflects it (Aman's own framing: "just like Instagram's like
+button"). This surfaced a real bug: the failure-rollback path reused
+the same `error` state that blanks JobList's entire render, so a
+single failed background update was wiping the whole visible list, not
+just reverting one card - fixed by splitting a separate `statusError`
+slot (a small banner above the list) from the list-load `error`.
+Third pass, after a fourth status (**Rejected**, gated - only settable
+when a job's CURRENT status is already Applied, enforced both in
+`api.py`'s `set_job_status` and by only showing the button once
+Applied) started crowding the card with four buttons: replaced the
+three core statuses (Save/Applied/Not interested) with one `<select>`
+dropdown (picking "No status" is now how you clear it, since a native
+`<select>` doesn't fire a change event for re-picking its current
+value), and moved Rejected out of the per-card buttons entirely into a
+TAB-scoped action - a "Rejected" button on the My Jobs tab (every job
+there is guaranteed Applied) that sets it, and the same-looking button
+on the Rejected tab itself that un-rejects. Un-rejecting was
+deliberately built to restore **Applied**, not clear to no status -
+Aman's own call: "rejected is a substate of applied."
+
+**A "New Jobs" tab, tab bar as a dropdown, and a company search box** -
+built from Aman's own sketch. `GET /jobs/new` (same 24h freshness
+window "All Jobs" uses, filtered to jobs with NO `user_jobs` row at
+all for this user) is a genuinely different thing from the
+`find_new_matches()`/`state.py`-era "what's new since last run" idea
+noted as resolved in Next Steps below - same route name, unrelated
+concept, this one's a live "still needs a decision" queue that shrinks
+as jobs get any status. The six-tab row (`All Jobs`, `New Jobs`,
+`My Jobs`, `Saved Jobs`, `Rejected Jobs`, `Archived Jobs`) became one
+`<select>` instead of buttons (too many to stay as a clean row), and a
+company-name search box filters whatever the active tab already
+loaded, entirely client-side - no backend query param, no extra
+network round-trip per keystroke.
+
+**A shared "last fetched" timestamp** - a single-row `refresh_log`
+table (`id=1`, upserted every `POST /refresh`), read by every
+jobs-listing endpoint so "Last fetched 2 Sep, 11:33pm" next to the
+Refresh Jobs button is the same value for every user/device, not a
+per-browser guess - deliberately NOT `localStorage`, since refreshing
+is already a shared/global action.
+
+**Light/dark theme toggle, an avatar dropdown menu, and a Profile
+page.** The toggle (moon/sun pill, sliding thumb) persists an explicit
+choice to `localStorage` and sets `data-theme` on `<html>`, which now
+takes precedence over the existing `prefers-color-scheme` media query
+(no stored choice yet falls back to the OS/browser preference). The
+round initials avatar (first + last name initial - "Aman Yogesh
+Kulwal" → "AK") went from a direct link to Profile, to a proper
+dropdown (View Profile / Logout, closes on any outside click) per a
+follow-up sketch, folding the separate Log out button into it.
+
+**Admin-only company management - the one feature that needed a real
+architecture fix to actually work, not just new UI.** `User.is_admin`
+(migration, `server_default='false'` added by hand after autogenerate
+produced a bare `add_column` that would have failed outright against
+the `users` table's real existing rows), a `get_current_admin`
+dependency (403, not 401 - the token IS valid, the user just isn't
+allowed), and `POST /companies` - gated to admins, `platform`
+restricted to a NARROWER `SelfServicePlatform` literal
+(greenhouse/lever/ashby/smartrecruiters/workday) than the full
+`Platform` enum: `fetch_atlassian` (and, by the same pattern,
+amazon/deshaw) are hardcoded to that ONE specific existing company's
+own endpoint regardless of what slug is passed - letting an admin pick
+one of those for a genuinely NEW company would silently create a row
+that just re-fetches an existing company's jobs under a different
+name, not add anything real. **The actual fix**: `ingest.py` used to
+build its fetch list from `companies.py`'s static `ALL_COMPANIES`
+Python list, completely separate from the `companies` DATABASE table -
+meaning an admin-added company would sit in the database forever,
+never once actually fetched. Reworked so `fetch_all_jobs()` takes an
+explicit company list (defaulting to `ALL_COMPANIES` for
+`python main.py`/`seed_companies.py`, unchanged), and `ingest.py` (the
+real path behind `POST /refresh`) now builds that list from the live
+`companies` table instead - verified with a real end-to-end test: an
+admin-added fake company ("E2E Test Company") showed up in the actual
+refresh log (`E2E Test Company (greenhouse): 0 open jobs`) on the very
+next `/refresh`, no redeploy needed. Aman asked whether this DB read
+should be cached against `companies.py` to avoid an "extra call" -
+checked the diff and it wasn't a new query at all (the same
+`db.query(Company).all()` call already existed, just reused for a
+second purpose), and writing back to `companies.py` at runtime isn't
+possible anyway (Lambda's own code directory is read-only, the same
+constraint already documented for `state.py`'s `append_to_log()`) - so
+this was correctly talked out of, not built.
+
+**One-command deploy** (`deploy.ps1` + `backend/.deploy/build_zip.py`),
+replacing the manual "upload a zip in the Lambda console, drag files
+into the S3 console, click Invalidate" workflow. Installs Lambda
+dependencies fresh only when `requirements-lambda.txt` changes since
+the last run (hashed and cached), otherwise reuses the existing
+install and just re-zips current source + uploads - a full deploy
+(backend + frontend) is one command afterward. AWS CLI installed and
+configured under the existing `jobwatcher` IAM user (`AdministratorAccess`,
+account `125226039485`) rather than root credentials. `backend/.deploy/`
+is gitignored EXCEPT `build_zip.py` itself (real source code the
+script depends on, not build output) - caught and fixed before the
+first commit, since the original blanket `.gitignore` pattern would
+have silently excluded it from a fresh clone.
+
+---
+
 ## Challenges faced, and how they were actually solved
 
 Documented in the order they happened, including the wrong turns —
@@ -1179,11 +1296,14 @@ so far:
     already, but always empty/null - the resume-independent extraction
     that would populate `job_skills`/`Job.yoe` from raw job text is
     genuinely separate, not-yet-built work.
-11. **No admin-role concept, so `POST /refresh` is reachable by
-    anyone with the URL**, not gated to Aman specifically - a known,
-    accepted gap for now (see `api.py`'s own docstring), worth locking
-    down (an admin check, or moving the trigger to a scheduled job
-    instead of a public endpoint) before this matters for real.
+11. ~~No admin-role concept~~ **PARTIALLY RESOLVED (2026-09-03/04).**
+    `User.is_admin` + `get_current_admin` now exist and gate `POST
+    /companies` (admin-only company management - see its own dated
+    section above). `POST /refresh` itself is STILL not admin-gated,
+    deliberately left as-is for now (see `api.py`'s own docstring) -
+    reachable by anyone logged in, not just Aman specifically. Worth
+    revisiting now that the admin-role machinery already exists and
+    applying it here would be a small, mostly mechanical follow-up.
 12. **The phased ML/matching architecture** (Aman's own design):
     final target is LangChain/LangGraph orchestration, BM25 + dense
     hybrid retrieval, a Cohere reranker, sentence embeddings + cosine
@@ -1212,4 +1332,18 @@ so far:
     which never have a staleness problem). Setting a short/no-cache
     `Cache-Control` header specifically on `index.html` (and the two
     SVGs) would remove this manual step going forward - discussed,
-    not yet done.
+    not yet done. `deploy.ps1` (2026-09-04) automates TRIGGERING the
+    invalidation, not removing the need for one.
+15. **Admin company management is add-only.** `POST /companies` has no
+    counterpart to view, edit, or remove a company through the UI -
+    checking what's been added, fixing a typo'd slug, or retiring a
+    dead board all still require a direct database query right now.
+    Also no `created_by` tracking on `Company` - who added a given
+    company isn't recorded anywhere.
+16. **`POST /companies` accepts any non-empty `slug`, unvalidated
+    beyond that.** Format genuinely varies by platform (a plain
+    Greenhouse board slug vs. Workday's pipe-separated
+    `tenant|wdN|site`), so there's no single check that would catch a
+    malformed one before the next `/refresh` actually tries it and
+    silently gets 0 jobs back - the same failure mode a real seeded
+    company (with a wrong slug) would already have.
