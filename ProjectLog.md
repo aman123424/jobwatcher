@@ -966,6 +966,58 @@ have silently excluded it from a fresh clone.
 
 ---
 
+## Full company management: list, edit, delete (2026-09-04)
+
+The admin "Add Company" feature above grew into a real management
+page, not just a one-way add form - restricted platforms were kept
+(greenhouse/lever/ashby/smartrecruiters/workday only, per the earlier
+`SelfServicePlatform` reasoning) exactly as they were.
+
+**Backend**: `POST /companies` gained three siblings - `GET
+/companies` (the full list, alphabetical), `GET /companies/{id}`
+(fetched fresh by id, not passed through frontend navigation state, so
+a direct URL visit or page reload still works), `PUT /companies/{id}`
+(same `SelfServicePlatform` restriction as create - editing one of the
+original four hardcoded-to-one-company rows, amazon/deshaw/atlassian/
+pcsx, stays a direct-database action, a documented limitation, not an
+oversight), and `DELETE /companies/{id}`. Delete CASCADES manually -
+`Job.company_id` has no `ON DELETE CASCADE` at the database level, so
+removing a company with real jobs still attached would otherwise fail
+outright on the foreign key constraint; the endpoint deletes that
+company's `user_jobs` rows, then its `jobs` rows, then the company
+itself, all in one transaction. **A real bug found and fixed during
+this**: `CORSMiddleware`'s `allow_methods` still only listed `GET,
+POST, DELETE` - missing `PUT` entirely, the same class of gap as the
+earlier missing-`DELETE` bug from the Rejected-status work. Caught
+live: the edit form's save button silently failed with a generic
+"could not reach the backend" message, traced to the browser's PUT
+preflight `OPTIONS` request getting a 400 - fixed by adding `PUT` to
+the allow-list, verified with a direct curl preflight check before
+retrying through the real UI.
+
+**Frontend**: the "+ Add Company" button moved OFF the jobs page
+entirely, into a new "Companies" item in the avatar dropdown menu
+(admin-only, same `is_admin` gating pattern as everywhere else) that
+opens a new `/companies` page. That page deliberately mirrors JobsPage's
+own layout instead of inventing a new one - same `AppHeader` (newly
+extracted as its own shared component so the two pages' headers can't
+drift apart over time), "+ Add Company" sitting where "Refresh Jobs"
+does, the same company-search box in the same spot, and `CompanyCard`
+rows (name, platform - or "Custom ATS" for the four non-self-service
+ones - plus edit/delete icon buttons, delete in red) in place of
+`JobCard`. `AddCompanyPage` and a new `EditCompanyPage` now share one
+`CompanyForm` component (name/platform/slug fields + submit), rather
+than duplicating that markup twice.
+
+Verified live end-to-end, both the API directly (curl: create → list
+→ get → update → delete → confirm 404 after) and through the real
+browser UI (create a company from the page → find it via search after
+a fresh page load → edit its name → save → delete with the confirm
+dialog → confirm it's gone). Test companies and users cleaned out of
+the real Supabase database afterward.
+
+---
+
 ## Challenges faced, and how they were actually solved
 
 Documented in the order they happened, including the wrong turns —
@@ -1334,12 +1386,13 @@ so far:
     SVGs) would remove this manual step going forward - discussed,
     not yet done. `deploy.ps1` (2026-09-04) automates TRIGGERING the
     invalidation, not removing the need for one.
-15. **Admin company management is add-only.** `POST /companies` has no
-    counterpart to view, edit, or remove a company through the UI -
-    checking what's been added, fixing a typo'd slug, or retiring a
-    dead board all still require a direct database query right now.
-    Also no `created_by` tracking on `Company` - who added a given
-    company isn't recorded anywhere.
+15. ~~Admin company management is add-only~~ **RESOLVED (2026-09-04).**
+    `GET /companies`, `GET /companies/{id}`, `PUT /companies/{id}`, and
+    `DELETE /companies/{id}` all exist now, backing a full `/companies`
+    management page (list, search, edit, delete) - see its own dated
+    section above. Still no `created_by` tracking on `Company` - who
+    added a given company isn't recorded anywhere - a real, small gap
+    left open.
 16. **`POST /companies` accepts any non-empty `slug`, unvalidated
     beyond that.** Format genuinely varies by platform (a plain
     Greenhouse board slug vs. Workday's pipe-separated
