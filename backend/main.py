@@ -70,11 +70,22 @@ LOG_FILE = os.path.join(os.path.dirname(__file__), "matches_log.csv")
 MAX_CONCURRENT_FETCHES = 10
 
 
-def fetch_all_jobs() -> list[dict]:
+def fetch_all_jobs(companies: list[tuple] | None = None) -> list[dict]:
     """
-    Fetch every company in companies.py and collect everything into
-    one flat list — but, as of 2026-08-27, up to MAX_CONCURRENT_FETCHES
+    Fetch every given company and collect everything into one flat
+    list — but, as of 2026-08-27, up to MAX_CONCURRENT_FETCHES
     companies AT THE SAME TIME instead of one after another.
+
+    `companies` defaults to ALL_COMPANIES (companies.py's own static,
+    hand-picked list) when not given - what `python main.py` and
+    seed_companies.py both still want. ingest.py (the real production
+    path behind POST /refresh) passes the DATABASE's own `companies`
+    table instead (added 2026-09-03, alongside the admin "Add Company"
+    feature) - companies.py is the ORIGINAL seed data, not the live
+    source of truth for what gets fetched anymore; a company added
+    through the admin UI only ever exists as a `companies` row, never
+    in this file, so fetching would silently never include it if this
+    function still only knew about companies.py's own list.
 
     IF YOU'RE NEW TO PYTHON, READ THIS FIRST — WHY THIS WORKS AND WHAT
     "CONCURRENT" MEANS HERE: fetching a company's jobs is almost all
@@ -136,6 +147,9 @@ def fetch_all_jobs() -> list[dict]:
             print(f"  {display_name:20s} ({platform:16s}): FAILED - {e}")
             return []
 
+    if companies is None:
+        companies = ALL_COMPANIES
+
     all_jobs = []
     # `with ... as executor:` creates the thread pool and guarantees
     # it's properly shut down afterward (even if something inside
@@ -143,7 +157,7 @@ def fetch_all_jobs() -> list[dict]:
     # else in this codebase for opening files (see state.py, main.py's
     # own append_to_log() below).
     with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_FETCHES) as executor:
-        futures = [executor.submit(fetch_one_company, company) for company in ALL_COMPANIES]
+        futures = [executor.submit(fetch_one_company, company) for company in companies]
         for future in as_completed(futures):
             all_jobs.extend(future.result())
     return all_jobs

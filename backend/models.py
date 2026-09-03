@@ -140,6 +140,14 @@ class User(Base):
     tier: Mapped[UserTier] = mapped_column(
         default=UserTier.free, nullable=False
     )
+    # Gates admin-only actions (currently just POST /companies - see
+    # api.py's get_current_admin) - a real access-control flag, not a
+    # UI-only convenience: the backend endpoint itself checks this, the
+    # frontend button just hides for a non-admin user too so they don't
+    # see a dead end. Defaults False - every account is a normal user
+    # unless explicitly flipped (directly in the database; no
+    # self-service "become an admin" path exists anywhere).
+    is_admin: Mapped[bool] = mapped_column(default=False, nullable=False)
     # Both nullable - only ever populated once a paid user uploads a
     # resume. resume_url points at the file in S3; scoring_logic is a
     # human-readable note on how their personal scoring was derived

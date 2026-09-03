@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { AvatarMenu } from "../components/AvatarMenu";
 import { JobList } from "../components/JobList";
 import { JobsTabs } from "../components/JobsTabs";
@@ -49,6 +50,20 @@ export function JobsPage() {
         </button>
         {lastRefreshedAt && <span className="last-refreshed">Last fetched {lastRefreshedAt}</span>}
       </div>
+
+      {/* Admin-only (see App.tsx's /add-company route) - the real
+          access check is server-side (POST /companies' get_current_admin,
+          see backend/auth.py), this just avoids showing a dead-end
+          button to everyone else. "Just above the tabs dropdown"
+          (Aman's own placement, 2026-09-03) - its own row, right-aligned
+          to sit above the dropdown specifically, not the search box. */}
+      {user?.is_admin && (
+        <div className="add-company-row">
+          <Link to="/add-company" className="add-company-button">
+            + Add Company
+          </Link>
+        </div>
+      )}
 
       <div className="jobs-filter-row">
         <input

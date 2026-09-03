@@ -121,3 +121,21 @@ def get_current_user(
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
     return user
+
+
+def get_current_admin(user: User = Depends(get_current_user)) -> User:
+    """
+    Same as get_current_user above, plus an `is_admin` check - used by
+    admin-only endpoints (currently just POST /companies, see api.py).
+    Builds ON TOP of get_current_user (a dependency depending on
+    another dependency) rather than duplicating the JWT-decode logic,
+    so login validity and the admin check can never drift apart.
+
+    403 ("Forbidden"), not 401 ("Unauthorized") - the token IS valid
+    and DOES identify a real, logged-in user; they're just not
+    ALLOWED to do this specific thing, a genuinely different case from
+    "you're not logged in at all."
+    """
+    if not user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    return user

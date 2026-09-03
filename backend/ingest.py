@@ -28,6 +28,16 @@ of experience required" for every job, resume-independently. This
 file currently leaves `Job.yoe` NULL and never populates `job_skills`
 at all - extracting those from raw_description is genuinely separate,
 not-yet-built work, not something to guess at inline here.
+
+WHICH COMPANIES GET FETCHED (changed 2026-09-03, alongside the admin
+"Add Company" feature): this file now builds the company list from the
+DATABASE's `companies` table, not from companies.py's ALL_COMPANIES
+directly (though every company originally came FROM there, via
+seed_companies.py's one-time seed) - a company an admin adds through
+the UI only ever creates a `companies` row, so fetching had to start
+reading from there for a freshly-added company to ever actually show
+up on the next refresh, instead of silently never being fetched at
+all.
 """
 
 from db import SessionLocal
@@ -50,9 +60,18 @@ def ingest_relevant_jobs() -> dict:
         # Same lookup companies.py's own display_name provides - built
         # once here (one query) rather than one query per job, since
         # every job's source_company needs this same lookup.
-        companies_by_name = {c.name: c for c in db.query(Company).all()}
+        company_rows = db.query(Company).all()
+        companies_by_name = {c.name: c for c in company_rows}
 
-        all_jobs = fetch_all_jobs()
+        # The (name, platform, slug) tuple shape fetch_all_jobs() has
+        # always expected (see main.py) - built from the live DB rows
+        # instead of companies.py's own ALL_COMPANIES, so a company
+        # added through the admin UI (a `companies` row with no
+        # companies.py entry at all) gets fetched too, not just the
+        # original seeded set. `.value` unwraps the Platform enum back
+        # to the plain string FETCHERS is keyed by.
+        company_tuples = [(c.name, c.platform.value, c.slug) for c in company_rows]
+        all_jobs = fetch_all_jobs(company_tuples)
         relevant_jobs = [
             j for j in all_jobs
             if is_relevant_title(j["title"])

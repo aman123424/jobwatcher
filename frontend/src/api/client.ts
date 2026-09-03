@@ -1,4 +1,13 @@
-import type { AuthResponse, JobsListResponse, JobStatus, LoginPayload, RefreshSummary, RegisterPayload } from "./types";
+import type {
+  AuthResponse,
+  CreateCompanyPayload,
+  CreateCompanyResponse,
+  JobsListResponse,
+  JobStatus,
+  LoginPayload,
+  RefreshSummary,
+  RegisterPayload,
+} from "./types";
 
 /**
  * Thrown specifically for a 401 response - lets callers (see
@@ -141,5 +150,14 @@ export function clearJobStatus(token: string, jobId: string): Promise<{ job_id: 
   return request(`/jobs/${jobId}/status`, {
     method: "DELETE",
     headers: authHeaders(token),
+  });
+}
+
+/** POST /companies - admin-only (see api.py's get_current_admin); adds a company that starts getting fetched from the next Refresh Jobs onward. A non-admin token gets a 403, surfaced by request()'s normal error handling - same as any other failure. */
+export function createCompany(token: string, payload: CreateCompanyPayload): Promise<CreateCompanyResponse> {
+  return request<CreateCompanyResponse>("/companies", {
+    method: "POST",
+    headers: { ...authHeaders(token), "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
   });
 }

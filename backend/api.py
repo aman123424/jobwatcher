@@ -87,6 +87,12 @@ CURRENT ENDPOINTS:
                             when the job's current status is already
                             applied (see this endpoint's own docstring).
                             Requires login.
+  - POST /companies         Admin-only (see auth.py's get_current_admin
+                            and models.py's User.is_admin, both added
+                            2026-09-03). Adds a company to the shared
+                            `companies` table - fetched starting the
+                            very next POST /refresh (see ingest.py's
+                            own module docstring for how that's wired).
 
 NOT YET BUILT (real, known gaps, not silently faked):
   - tech_stack and years_experience_required are real fields in every
@@ -98,9 +104,11 @@ NOT YET BUILT (real, known gaps, not silently faked):
     retrieval + Cohere reranker, phased - see project memory), to be
     computed live per user once built, never stored on the shared
     `jobs` table.
-  - No admin-role concept, so POST /refresh is reachable by anyone
-    with the URL, not gated to Aman specifically - see that endpoint's
-    own docstring below.
+  - POST /refresh itself still isn't admin-gated (still reachable by
+    anyone with the URL, not just Aman specifically) - the admin-role
+    concept exists now (User.is_admin, added 2026-09-03 for POST
+    /companies) but was deliberately only applied there so far; see
+    that endpoint's own docstring below for the still-open reasoning.
 
 RUN IT:
     uvicorn api:app --reload
@@ -116,11 +124,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from auth import get_current_user
+from auth import get_current_admin, get_current_user
 from auth_routes import router as auth_router
 from db import get_db
 from ingest import ingest_relevant_jobs
-from models import Job, JobStatus, RefreshLog, User, UserJob
+from models import Company, Job, JobStatus, Platform, RefreshLog, User, UserJob
 from scoring import REFRESH_WINDOW_HOURS
 
 app = FastAPI(
@@ -596,5 +604,63 @@ def clear_job_status(
         db.delete(existing)
         db.commit()
     return {"job_id": job_id, "status": None}
+
+
+class CreateCompanyRequest(BaseModel):
+    company_name: str
+    # A real Platform enum, not a plain string - FastAPI/Pydantic
+    # rejects anything that isn't one of fetchers.py's actual known
+    # platforms with a clean 422 before this endpoint's own code even
+    # runs. A free-text platform would let an admin create a company
+    # that can NEVER be fetched (FETCHERS[platform] would KeyError
+    # inside ingest.py the moment a refresh tried it) with no
+    # indication anything was wrong until that crash - this closes
+    # that off at the door instead.
+    platform: Platform
+    # The platform-specific fetch identifier - format varies a lot by
+    # platform (see Company.slug's own docstring in models.py, e.g.
+    # Workday's "tenant|wdN|site" vs a plain Greenhouse board slug) -
+    # deliberately NOT validated here beyond "non-empty string", since
+    # there's no single format that's correct across every platform.
+    slug: str
+
+
+class CreateCompanyResponse(BaseModel):
+    id: str
+    name: str
+
+
+@app.post("/companies", response_model=CreateCompanyResponse, status_code=status.HTTP_201_CREATED)
+def create_company(
+    payload: CreateCompanyRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """
+    Admin-only (see get_current_admin in auth.py). Adds a new row to
+    the shared `companies` table - from the NEXT POST /refresh onward,
+    ingest.py builds its fetch list straight from this table (changed
+    2026-09-03 specifically to make this endpoint actually work end to
+    end - see ingest.py's own module docstring), so a company added
+    here starts showing up in everyone's job feed on the very next
+    refresh, no redeploy needed.
+
+    `admin` itself is unused beyond the dependency enforcing the
+    access check - who specifically added a company isn't tracked
+    anywhere right now (a real, small gap - worth a created_by column
+    if that history ever matters).
+    """
+    existing = db.query(Company).filter(Company.name == payload.company_name).first()
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A company with this name already exists",
+        )
+
+    company = Company(name=payload.company_name, platform=payload.platform, slug=payload.slug)
+    db.add(company)
+    db.commit()
+    db.refresh(company)
+    return CreateCompanyResponse(id=str(company.id), name=company.name)
 
 

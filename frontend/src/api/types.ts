@@ -9,6 +9,8 @@ export interface AuthUser {
   name: string;
   email: string;
   tier: "free" | "paid";
+  /** Gates admin-only UI (currently just the "+ Add Company" button - see AvatarMenu/JobsPage.tsx). The real access check lives server-side (backend/auth.py's get_current_admin) - this only controls whether the button shows at all, never trusted as the actual security boundary. */
+  is_admin: boolean;
 }
 
 /** What POST /auth/register and POST /auth/login both return. */
@@ -72,4 +74,29 @@ export interface RefreshSummary {
   inserted: number;
   updated: number;
   skipped_unknown_company: number;
+}
+
+/** Mirrors backend/models.py's Platform enum exactly - these values ARE fetchers.py's FETCHERS dict keys, so a value outside this list would never actually be fetchable (see api.py's CreateCompanyRequest, which validates against the same enum server-side). */
+export type Platform =
+  | "greenhouse"
+  | "lever"
+  | "ashby"
+  | "smartrecruiters"
+  | "workday"
+  | "pcsx"
+  | "amazon"
+  | "deshaw"
+  | "atlassian";
+
+/** What POST /companies expects - mirrors backend/api.py's CreateCompanyRequest. */
+export interface CreateCompanyPayload {
+  company_name: string;
+  platform: Platform;
+  slug: string;
+}
+
+/** What POST /companies returns - mirrors backend/api.py's CreateCompanyResponse. */
+export interface CreateCompanyResponse {
+  id: string;
+  name: string;
 }

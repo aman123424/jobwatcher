@@ -80,6 +80,12 @@
   margin: 0;
 }
 
+.auth-success {
+  color: #30a46c;
+  font-size: 14px;
+  margin: 0;
+}
+
 .auth-switch {
   text-align: center;
   font-size: 14px;
@@ -296,6 +302,31 @@
 .last-refreshed {
   font-size: 13px;
   color: var(--text);
+}
+
+/* --- Add Company (admin-only) --- */
+
+.add-company-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+.add-company-button {
+  font: inherit;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-h);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.add-company-button:hover {
+  background: var(--accent-bg);
 }
 
 /* --- Company search + tab dropdown --- */

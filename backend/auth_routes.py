@@ -56,6 +56,12 @@ class AuthResponse(BaseModel):
     name: str
     email: str
     tier: str
+    # Lets the frontend show/hide admin-only UI (currently just the
+    # "+ Add Company" button - see AvatarMenu/JobsPage.tsx) without a
+    # separate "am I an admin" call - the real access check still lives
+    # server-side (get_current_admin, api.py's POST /companies), this
+    # is purely so the button doesn't show a dead end to a non-admin.
+    is_admin: bool
 
 
 def _to_auth_response(user: User) -> AuthResponse:
@@ -66,6 +72,7 @@ def _to_auth_response(user: User) -> AuthResponse:
         name=user.name,
         email=user.email,
         tier=user.tier.value,
+        is_admin=user.is_admin,
     )
 
 
