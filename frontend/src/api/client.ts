@@ -1,5 +1,6 @@
 import type {
   AuthResponse,
+  AuthUser,
   CompanyOut,
   CreateCompanyPayload,
   JobScoreOut,
@@ -102,6 +103,19 @@ export function login(payload: LoginPayload): Promise<AuthResponse> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+}
+
+/**
+ * GET /auth/me - re-fetches the logged-in user's own info fresh from
+ * the database. AuthProvider (see useAuth.tsx) calls this once on app
+ * load: login/register only ever set `is_admin` (and everything else)
+ * ONCE, at that moment, then cache it in localStorage indefinitely - a
+ * flag granted after that stayed invisible to an already-logged-in
+ * browser until it happened to log out and back in. This closes that
+ * gap without forcing a fresh login.
+ */
+export function fetchCurrentUser(token: string): Promise<AuthUser> {
+  return request<AuthUser>("/auth/me", { headers: authHeaders(token) });
 }
 
 /** GET /jobs - "All Jobs": every job posted in the last 24h (or of unknown age), with this user's own status attached where one exists. */

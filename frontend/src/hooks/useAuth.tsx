@@ -1,5 +1,6 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import * as api from "../api/client";
+import { UnauthorizedError } from "../api/client";
 import type { AuthUser, LoginPayload, RegisterPayload } from "../api/types";
 
 const TOKEN_STORAGE_KEY = "jobwatcher_token";
@@ -68,6 +69,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(stored.token);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Re-fetches `is_admin` (and everything else) fresh from the server
+  // once per app load, instead of trusting the snapshot cached at
+  // login/register time forever - see fetchCurrentUser()'s own comment
+  // in api/client.ts for the bug this fixes (an admin flag granted
+  // after someone's last login stayed invisible to their still-logged-
+  // in browser). Runs once on mount, not on every token/user change -
+  // login()/register() below already set a fresh, correct user object
+  // themselves, so re-running this right after would just be a
+  // redundant network call.
+  useEffect(() => {
+    if (!stored.token) return;
+    api
+      .fetchCurrentUser(stored.token)
+      .then((freshUser) => {
+        saveSession(stored.token as string, freshUser);
+        setUser(freshUser);
+      })
+      .catch((err) => {
+        // An expired/invalid token - the same case every OTHER
+        // authenticated call treats as "log out", so this does too,
+        // rather than leaving a dead session silently cached.
+        if (err instanceof UnauthorizedError) {
+          clearSession();
+          setToken(null);
+          setUser(null);
+        }
+        // Any other failure (network down, backend unreachable) -
+        // deliberately left alone: keep using the cached snapshot
+        // rather than logging someone out just because this one
+        // best-effort refresh couldn't complete.
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function login(payload: LoginPayload) {
     setIsLoading(true);

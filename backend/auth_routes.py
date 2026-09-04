@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
-from auth import create_access_token, hash_password, verify_password
+from auth import create_access_token, get_current_user, hash_password, verify_password
 from db import get_db
 from models import User
 
@@ -118,3 +118,33 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
     return _to_auth_response(user)
+
+
+class UserOut(BaseModel):
+    """Same shape as AuthResponse minus the token fields - GET /me isn't issuing a new token, just reporting who the caller's existing one belongs to."""
+    user_id: str
+    name: str
+    email: str
+    tier: str
+    is_admin: bool
+
+
+@router.get("/me", response_model=UserOut)
+def me(user: User = Depends(get_current_user)):
+    """
+    Re-fetches the current user's own info fresh from the database,
+    keyed off their existing token - added 2026-09-05 after discovering
+    the frontend only ever learns `is_admin` (and everything else) at
+    login/register time and then caches it in localStorage indefinitely
+    (see useAuth.tsx). An admin flag granted AFTER someone's last login
+    stayed invisible to their still-logged-in browser until they
+    happened to log out and back in - this lets the frontend refresh
+    that snapshot on app load without forcing a fresh login.
+    """
+    return UserOut(
+        user_id=str(user.id),
+        name=user.name,
+        email=user.email,
+        tier=user.tier.value,
+        is_admin=user.is_admin,
+    )

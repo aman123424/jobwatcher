@@ -56,9 +56,27 @@ const TAB_STATUS: Record<Exclude<JobsTab, "all">, JobStatus | null> = {
  * will be back in a moment" from "this might take a while", which
  * matters for what the UI should actually show while each is in flight.
  */
+// Remembered across a route round-trip (e.g. clicking a job's score
+// badge, then coming back) via sessionStorage rather than component
+// state, since JobsPage fully unmounts for that navigation (see
+// App.tsx - "/jobs/:id/score" is a separate route, not an overlay) -
+// plain useState would reset to "all" on the way back. sessionStorage
+// (not localStorage) is deliberate: this is a per-tab UI convenience,
+// not data worth surviving a closed browser.
+const TAB_STORAGE_KEY = "jobwatcher:activeTab";
+
+function loadStoredTab(): JobsTab {
+  const stored = sessionStorage.getItem(TAB_STORAGE_KEY);
+  return stored && stored in TAB_FETCHERS ? (stored as JobsTab) : "all";
+}
+
 export function useJobs() {
   const { token, logout } = useAuth();
-  const [tab, setTab] = useState<JobsTab>("all");
+  const [tab, setTabState] = useState<JobsTab>(loadStoredTab);
+  const setTab = useCallback((next: JobsTab) => {
+    sessionStorage.setItem(TAB_STORAGE_KEY, next);
+    setTabState(next);
+  }, []);
   const [jobs, setJobs] = useState<JobOut[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
