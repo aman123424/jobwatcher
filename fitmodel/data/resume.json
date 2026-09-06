@@ -1,0 +1,76 @@
+{
+  "sections": [
+    {
+      "section": "education",
+      "organization": "IIT Madras",
+      "title": "BTech Chemical Engineering, 2020-2024, CGPA 7.91/10",
+      "bullets": [
+        "IIT Madras 2020-2024, BTech Chemical Engineering, CGPA 7.91/10.",
+        "99.25 percentile JEE Mains 2020, EWS Rank 720 JEE Advanced 2020."
+      ]
+    },
+    {
+      "section": "experience",
+      "organization": "WiseTech Global",
+      "title": "Associate Software Engineer, Bengaluru, July 2024 - present",
+      "bullets": [
+        "Developed AE Customs modules and UAE Manifest workflows in CargoWise using C# .NET, processing 10k+ customs declarations per month across the Middle East and Africa region, achieving NAIC certification for customs compliance.",
+        "Designed and built an automated data ingestion pipeline for tariff and exchange rate data across multiple countries using Selenium and Spire.PDF, replacing the manual process and generating XML for downstream systems.",
+        "Built an automated migration tool, parsing legacy NUnitCore syntax into NUnit 4 syntax using rule-based transformations, migrating 150+ files across multiple modules without manual rework.",
+        "Authored 500+ unit and integration tests using NUnit and Moq, strengthening code reliability and safeguarding the CI/CD pipeline across the Customs module.",
+        "Conducted peer code reviews and performed User Acceptance Testing."
+      ]
+    },
+    {
+      "section": "experience",
+      "organization": "Desklamp",
+      "title": "Software Developer Intern, Chennai, May 2022 - Jan 2023",
+      "bullets": [
+        "Built a PDF reader app with advanced note-taking features using React.js, shipping a production-level PWA that scaled to 25k+ users post-launch."
+      ]
+    },
+    {
+      "section": "project",
+      "organization": "JobWatcher - Job Aggregator",
+      "title": "Python, FastAPI, React TS, PostgreSQL, AWS Lambda, CloudFront, S3, Aug 2026",
+      "bullets": [
+        "Designed and built an adapter-pattern ingestion layer reconciling 6+ divergent ATS APIs across 50+ companies into a single unified job schema.",
+        "Implemented concurrency throttling, parallelizing fetches across companies to handle per-company rate limits reliably.",
+        "Built a skill-weighted ranking model with requirement-tier weighting to score how well a job description matches a candidate's resume."
+      ]
+    },
+    {
+      "section": "project",
+      "organization": "Hostel Affairs Complaints Portal",
+      "title": "React TS, TypeGraphQL, TypeORM, PostgreSQL, April-June 2023",
+      "bullets": [
+        "Built a full-stack complaints portal for 11k+ IITM students.",
+        "Designed a 3-tier RBAC hierarchy with delegated role assignment.",
+        "Implemented Google OAuth one-click signup."
+      ]
+    },
+    {
+      "section": "leadership",
+      "organization": "Webops Core, Shaastra IIT Madras",
+      "title": "May 2023 - April 2024",
+      "bullets": [
+        "Led a 3-tier team of 20 developers delivering 14+ websites and a mobile app.",
+        "Built the core registration platform using React TS and Redux, deployed on DigitalOcean, handling 15k+ registrations.",
+        "Managed sprint planning and cross-project prioritization.",
+        "Managed Google Workspace infrastructure across 11 teams."
+      ]
+    },
+    {
+      "section": "skills",
+      "organization": null,
+      "title": "Technical Skills",
+      "bullets": [
+        "Languages: C#, C++, Python, JavaScript, TypeScript, SQL, HTML/CSS, Dart.",
+        "Frameworks: .NET, FastAPI, Node.js, React, TypeGraphQL, TypeORM, Flutter, NUnit, Moq, Selenium.",
+        "Databases and Cloud: PostgreSQL, Docker, Kubernetes, DigitalOcean, AWS Lambda, AWS CloudFront, AWS S3.",
+        "Concepts: Data Structures and Algorithms, System Design, REST APIs, GraphQL, OOP, SOLID Principles, TDD.",
+        "Tools: Git, GitHub, GitLab, Visual Studio, VS Code, GitHub Copilot, Claude Code, Azure DevOps."
+      ]
+    }
+  ]
+}

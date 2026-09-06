@@ -18,3 +18,11 @@ seen_jobs.json
 # by these patterns - a fresh clone needs it for deploy.ps1 to work.
 backend/.deploy/package/
 backend/.deploy/*.zip
+
+# fitmodel/ - its own isolated venv (heavy: torch/sentence-transformers,
+# regenerated via `pip install -r requirements.txt`) and trained/cached
+# artifacts (regenerated via `python -m training.train` / on first
+# suggest() call) - neither is source code.
+fitmodel/venv/
+fitmodel/models/*.joblib
+fitmodel/models/*.npy
