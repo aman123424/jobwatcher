@@ -226,6 +226,25 @@ CUSTOM_COMPANIES = [
   ("Atlassian", "atlassian", "no-config-needed"),
 ]
 
+# PAUSED, NOT FORGOTTEN (Aman's own call, 2026-09-05) - Optum, via
+# fetch_talentbrew (fetchers.py), works and is fully built, but is
+# DELIBERATELY not in CUSTOM_COMPANIES above, so it never gets fetched
+# by a real /refresh. Reason: fetch_talentbrew can only ever see page 1
+# of a filtered keyword search - confirmed live that this site's
+# pagination breaks the instant ANY query parameter is present (not
+# just keyword/location - even a nonsense param breaks it), so a
+# same-day posting that happens to land past page 1 could be silently
+# missed. The only fix found so far (crawl the entire ~110-page
+# unfiltered UHG board every refresh and filter down ourselves,
+# same pattern fetch_atlassian already uses) would add several minutes
+# to EVERY refresh, not just Optum's - a real cost still worth deciding
+# on deliberately, not defaulting into. To re-enable once that's
+# decided: uncomment the line below (its DB row and the "talentbrew"
+# Platform enum value are both already in place) and re-run
+# seed_companies.py.
+#
+# ("Optum", "talentbrew", "34088|India|1269750|2|software,backend,frontend,full stack,data engineer,devops,cloud engineer,QA engineer"),
+
 # `if __name__ == "__main__":` is a standard Python pattern meaning
 # "only run the code below when this file is run directly (like
 # `python companies.py`), NOT when some other file just imports data

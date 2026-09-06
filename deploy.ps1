@@ -46,9 +46,16 @@ $CloudFrontDistId = "E6VN3AWR1IL8V"
 
 $BackendFiles = @(
     "api.py", "auth.py", "auth_routes.py", "companies.py", "db.py",
-    "fetchers.py", "ingest.py", "job_dates.py", "lambda_handler.py",
-    "main.py", "models.py", "scoring.py", "state.py"
+    "ingest.py", "job_dates.py", "lambda_handler.py",
+    "main.py", "models.py", "state.py"
 )
+
+# fetchers/ and scoring/ became packages (one file per ATS platform /
+# scoring concern) on 2026-09-06, replacing the flat fetchers.py and
+# scoring.py this list used to name directly - copied with -Recurse
+# below instead, same reasoning as any other "package, not a 1000+
+# line single file" split.
+$BackendPackages = @("fetchers", "scoring")
 
 # --- Paths ---
 $Root = $PSScriptRoot
@@ -108,6 +115,27 @@ if (-not $SkipBackend) {
     Write-Host "Copying current backend source files into package/..."
     foreach ($f in $BackendFiles) {
         Copy-Item (Join-Path $Backend $f) (Join-Path $PackageDir $f) -Force
+    }
+    # STALE FLAT-FILE CLEANUP: a package dir cached from before the
+    # 2026-09-06 fetchers.py/scoring.py -> fetchers//scoring/ package
+    # split would otherwise keep BOTH the old flat .py file AND the new
+    # package directory side by side in the zip (dependencies-unchanged
+    # deploys reuse this same package/ across runs - see NeedsInstall
+    # above - so old files here never get removed on their own). Remove
+    # first, then copy the real package dirs fresh every deploy (cheap -
+    # these are just this project's own source, not installed
+    # dependencies) so there's never a stale file left over from a
+    # previous layout.
+    foreach ($pkg in $BackendPackages) {
+        $StaleFlatFile = Join-Path $PackageDir "$pkg.py"
+        if (Test-Path $StaleFlatFile) {
+            Remove-Item $StaleFlatFile -Force
+        }
+        $PackageDest = Join-Path $PackageDir $pkg
+        if (Test-Path $PackageDest) {
+            Remove-Item $PackageDest -Recurse -Force
+        }
+        Copy-Item (Join-Path $Backend $pkg) $PackageDest -Recurse -Force
     }
 
     Write-Host "Zipping..."

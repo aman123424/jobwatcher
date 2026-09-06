@@ -140,7 +140,7 @@ from db import get_db
 from ingest import ingest_relevant_jobs
 from models import Company, Job, JobScore, JobScoreSource, JobStatus, Platform, RefreshLog, TrainingExample, User, UserJob
 from scoring import REFRESH_WINDOW_HOURS, score_job
-from scoring import _strip_html as strip_html_for_display
+from scoring import strip_html as strip_html_for_display
 
 app = FastAPI(
     title="jobwatch API",
