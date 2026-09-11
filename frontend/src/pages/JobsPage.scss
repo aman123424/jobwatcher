@@ -5,17 +5,8 @@
 
 .failed-companies-row {
   position: relative;
-  // Corrected 2026-09-12 (Aman's own follow-up correction, reversing
-  // the first attempt): gap ABOVE this (toward Refresh Jobs) stays at
-  // .refresh-row's own 20px margin-bottom (shared.scss) - untouched,
-  // no pull-up. Gap BELOW (toward the search bar) is deliberately
-  // SMALLER, so this reads as "closer to the search bar" rather than
-  // "closer to the button that caused it."
-  margin-bottom: 8px;
-  // Only the toggle itself takes up real layout space - the popover
-  // below is absolutely positioned, so opening/closing it never
-  // shifts the search bar or job list beneath it (see JobsPage.tsx's
-  // own comment on why this replaced an inline <ul>).
+  margin-bottom: 15px;
+  margin-top: -20px;
   display: inline-block;
 }
 
