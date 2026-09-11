@@ -134,6 +134,20 @@ TIER2_COMPANIES = [
     ("Baxter",       "workday", "baxter|wd1|baxter"),
 ]
 
+# tenant_dc_site format: "tenant|dc|site" - see fetch_oracle_cloud()'s
+# docstring in fetchers/oracle_cloud.py for exactly what each part means.
+# Oracle Cloud was previously written off entirely (see PROJECT_LOG.md
+# Tier 3 section - "no public API, JS-only career site") after only
+# checking a career page's HTML source for a server-rendered fallback.
+# Re-investigated 2026-09-11 by watching a real company's page make its
+# actual API call in a live browser network capture instead - found a
+# genuinely documented, standardized Oracle REST API underneath. Both
+# entries below are live-tested and working, not guessed.
+ORACLE_COMPANIES = [
+    ("Honeywell",         "oracle_cloud", "ibqbjb|ocs|CX_1"),
+    ("Texas Instruments", "oracle_cloud", "edbz|us2|CX_1"),
+]
+
 # These CONFIRMED-in-the-CSV companies are deliberately NOT included
 # above yet, because the data we have for them is incomplete or
 # contradicted by a live test. Fixing these needs Aman's DevTools
@@ -272,10 +286,18 @@ if __name__ == "__main__":
         parts = slug.split("|")
         assert len(parts) == 3, f"{name}: malformed Workday slug '{slug}' (need tenant|wdN|site)"
 
+    for name, platform, slug in ORACLE_COMPANIES:
+        assert platform == "oracle_cloud", f"{name}: ORACLE_COMPANIES should only contain oracle_cloud"
+        # Same shape check as Workday above (tenant|dc|site) - see
+        # fetch_oracle_cloud()'s docstring in fetchers/oracle_cloud.py.
+        parts = slug.split("|")
+        assert len(parts) == 3, f"{name}: malformed Oracle Cloud slug '{slug}' (need tenant|dc|site)"
+
     for name, platform, config in CUSTOM_COMPANIES:
         assert config.strip(), f"{name}: empty config"
 
-    total = len(TIER1_COMPANIES) + len(TIER2_COMPANIES) + len(CUSTOM_COMPANIES)
+    total = len(TIER1_COMPANIES) + len(TIER2_COMPANIES) + len(ORACLE_COMPANIES) + len(CUSTOM_COMPANIES)
     print(f"OK - {len(TIER1_COMPANIES)} Tier 1 + {len(TIER2_COMPANIES)} Tier 2 "
-          f"+ {len(CUSTOM_COMPANIES)} custom = {total} companies, all valid.")
+          f"+ {len(ORACLE_COMPANIES)} Oracle Cloud + {len(CUSTOM_COMPANIES)} custom "
+          f"= {total} companies, all valid.")
     print(f"({len(NEEDS_MORE_INFO)} companies waiting on more info - see NEEDS_MORE_INFO)")

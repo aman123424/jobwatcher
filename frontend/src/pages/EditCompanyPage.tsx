@@ -47,7 +47,7 @@ export function EditCompanyPage() {
         // See this component's own docstring - a non-self-service
         // platform has no matching <option>, so the dropdown falls
         // back to its own default rather than showing nothing selected.
-        const knownPlatforms: SelfServicePlatform[] = ["greenhouse", "lever", "ashby", "smartrecruiters", "workday"];
+        const knownPlatforms: SelfServicePlatform[] = ["greenhouse", "lever", "ashby", "smartrecruiters", "workday", "oracle_cloud"];
         if ((knownPlatforms as string[]).includes(company.platform)) {
           setPlatform(company.platform as SelfServicePlatform);
         }

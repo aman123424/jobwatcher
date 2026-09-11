@@ -90,6 +90,7 @@ class Platform(str, enum.Enum):
     ashby = "ashby"
     smartrecruiters = "smartrecruiters"
     workday = "workday"
+    oracle_cloud = "oracle_cloud"
     pcsx = "pcsx"
     amazon = "amazon"
     deshaw = "deshaw"

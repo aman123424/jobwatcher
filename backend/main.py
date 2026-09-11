@@ -38,7 +38,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
-from companies import TIER1_COMPANIES, TIER2_COMPANIES, CUSTOM_COMPANIES
+from companies import TIER1_COMPANIES, TIER2_COMPANIES, ORACLE_COMPANIES, CUSTOM_COMPANIES
 from fetchers import FETCHERS
 from scoring import score_job, is_relevant_title, is_india_location, is_recently_posted
 from state import load_seen, save_seen, split_new_jobs
@@ -49,7 +49,7 @@ from state import load_seen, save_seen, split_new_jobs
 # By the time fetch_all_jobs() runs, every company is just
 # (display_name, platform, slug) and FETCHERS[platform] handles the
 # rest, Tier 1 or Tier 2 alike.
-ALL_COMPANIES = CUSTOM_COMPANIES + TIER1_COMPANIES + TIER2_COMPANIES
+ALL_COMPANIES = CUSTOM_COMPANIES + TIER1_COMPANIES + TIER2_COMPANIES + ORACLE_COMPANIES
 
 MIN_SCORE = 50  #only notify for score >= 50/100.
 
@@ -314,7 +314,7 @@ def run() -> None:
     print(f"=== jobwatch run started {datetime.now(timezone.utc).isoformat()} ===")
     print(f"\nFetching current open jobs from {len(ALL_COMPANIES)} companies "
           f"({len(TIER1_COMPANIES)} Tier 1 + {len(TIER2_COMPANIES)} Tier 2 "
-          f"+ {len(CUSTOM_COMPANIES)} custom)...")
+          f"+ {len(ORACLE_COMPANIES)} Oracle Cloud + {len(CUSTOM_COMPANIES)} custom)...")
 
     results = find_new_matches()
 

@@ -693,10 +693,10 @@ def clear_job_status(
 # that company at all, it would silently create a row that just
 # re-fetches an existing company's jobs under a different name - a
 # real data-integrity bug, not just an inconvenience. greenhouse,
-# lever, ashby, smartrecruiters, and workday are the ones that are
-# actually generic - any company's own board, addressed by ITS OWN
+# lever, ashby, smartrecruiters, workday, and oracle_cloud are the ones that
+# are actually generic - any company's own board, addressed by ITS OWN
 # slug - which is what makes them safe for self-service.
-SelfServicePlatform = Literal["greenhouse", "lever", "ashby", "smartrecruiters", "workday"]
+SelfServicePlatform = Literal["greenhouse", "lever", "ashby", "smartrecruiters", "workday", "oracle_cloud"]
 
 
 class CreateCompanyRequest(BaseModel):

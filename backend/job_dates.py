@@ -53,6 +53,31 @@ def workday_posted_on_days(posted_on: str):
     return int(m.group(2))
 
 
+def oracle_cloud_posted_date_days(posted_date: str):
+    """
+    Parse Oracle Fusion Cloud Recruiting's "PostedDate" field - a real
+    "YYYY-MM-DD" date (day precision, no time-of-day - confirmed live
+    against real Honeywell/Texas Instruments postings, see
+    fetch_oracle_cloud's own docstring) - into an integer day count relative
+    to today, the same semantics workday_posted_on_days() returns, so
+    fetch_oracle_cloud()'s early-stop-on-staleness pagination can reuse the
+    exact same "is_recent = days_old < FRESHNESS_WINDOW_DAYS" check
+    fetch_workday() already uses.
+
+    Returns None for anything missing/unparseable - same "can't tell,
+    don't stop early on a guess" contract every other *_days() helper
+    in this file follows.
+    """
+    if not posted_date:
+        return None
+    try:
+        posted = datetime.strptime(posted_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    days_old = (datetime.now(timezone.utc).date() - posted.date()).days
+    return max(days_old, 0)
+
+
 def parse_posted_datetime(job: dict):
     """
     Turns whatever a job's "updated_at" field holds - a different raw
@@ -84,6 +109,9 @@ def parse_posted_datetime(job: dict):
         time-of-day in Amazon's own source data either, so this becomes
         midnight UTC on that date - also an approximation, just from a
         firmer starting fact (a real date, not a relative day-count).
+      - Oracle Fusion Cloud Recruiting: a real "YYYY-MM-DD" date
+        (PostedDate) - day precision, no time-of-day, same as Amazon's
+        day-only dates below - becomes midnight UTC on that date.
       - DE Shaw: no posted-date field in the API response AT ALL - this
         always returns None for DE Shaw jobs, meaning "we genuinely
         cannot tell how old this posting is," not "it's very old" or
@@ -124,6 +152,22 @@ def parse_posted_datetime(job: dict):
     if platform == "atlassian":
         try:
             dt = datetime.strptime(updated_at, "%Y-%m-%d %I:%M %p")
+        except ValueError:
+            return None
+        return dt.replace(tzinfo=timezone.utc)
+
+    if platform == "oracle_cloud":
+        # A real "YYYY-MM-DD" date, day precision only (see
+        # oracle_cloud_posted_date_days's own docstring) - same "no real
+        # time-of-day to recover, so midnight UTC on that date" honesty
+        # already applied to Amazon's day-only dates above. NOT parsed
+        # via fromisoformat() below: "2026-09-11" alone parses fine
+        # there too, but returns a NAIVE datetime (no tzinfo) - this
+        # function's contract is "always timezone-aware, in UTC", so it
+        # needs the explicit .replace() every other date-only branch
+        # here already uses.
+        try:
+            dt = datetime.strptime(updated_at, "%Y-%m-%d")
         except ValueError:
             return None
         return dt.replace(tzinfo=timezone.utc)

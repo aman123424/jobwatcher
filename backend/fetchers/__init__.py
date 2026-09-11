@@ -70,6 +70,7 @@ from .atlassian import fetch_atlassian
 from .deshaw import fetch_deshaw
 from .greenhouse import fetch_greenhouse
 from .lever import fetch_lever
+from .oracle_cloud import fetch_oracle_cloud
 from .pcsx import fetch_pcsx
 from .smartrecruiters import fetch_smartrecruiters
 from .talentbrew import fetch_talentbrew
@@ -81,6 +82,7 @@ FETCHERS = {
     "ashby": fetch_ashby,
     "smartrecruiters": fetch_smartrecruiters,
     "workday": fetch_workday,
+    "oracle_cloud": fetch_oracle_cloud,
     "pcsx": fetch_pcsx,
     "amazon": fetch_amazon,
     "deshaw": fetch_deshaw,
@@ -91,6 +93,6 @@ FETCHERS = {
 __all__ = [
     "FETCHERS",
     "fetch_greenhouse", "fetch_lever", "fetch_ashby", "fetch_smartrecruiters",
-    "fetch_workday", "fetch_pcsx", "fetch_amazon", "fetch_deshaw",
+    "fetch_workday", "fetch_oracle_cloud", "fetch_pcsx", "fetch_amazon", "fetch_deshaw",
     "fetch_atlassian", "fetch_talentbrew",
 ]

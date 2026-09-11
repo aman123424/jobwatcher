@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import type { SelfServicePlatform } from "../api/types";
 
 /** See SelfServicePlatform's own docstring in api/types.ts for why this list is narrower than every platform fetchers.py knows how to fetch. */
-const PLATFORMS: SelfServicePlatform[] = ["greenhouse", "lever", "ashby", "smartrecruiters", "workday"];
+const PLATFORMS: SelfServicePlatform[] = ["greenhouse", "lever", "ashby", "smartrecruiters", "workday", "oracle_cloud"];
 
 interface CompanyFormProps {
   title: string;
@@ -75,7 +75,8 @@ export function CompanyForm({
         </label>
         <p className="auth-subtitle">
           The platform-specific identifier used to fetch this company's board - a plain board slug for most
-          platforms, but a compound "|"-separated string for a few (e.g. Workday's "tenant|wdN|site").
+          platforms, but a compound "|"-separated string for a few (e.g. Workday's "tenant|wdN|site", or Oracle's
+          "tenant|dc|site").
         </p>
 
         {error && <p className="auth-error">{error}</p>}
