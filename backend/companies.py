@@ -241,6 +241,13 @@ CUSTOM_COMPANIES = [
   # placeholder string only exists to satisfy companies.py's own
   # self-check below (every CUSTOM_COMPANIES config must be non-empty).
   ("Atlassian", "atlassian", "no-config-needed"),
+  # Same "no per-company config needed" case as Atlassian above -
+  # fetch_goldman_sachs() (fetchers/goldman_sachs.py) always hits the
+  # same fixed GraphQL endpoint (higher.gs.com's own "Higher"
+  # platform, found via live introspection, not a reused ATS vendor
+  # another company could also be on). Live-tested 2026-09-12: 997+
+  # total roles, real India postings (Bengaluru).
+  ("Goldman Sachs", "goldman_sachs", "no-config-needed"),
 ]
 
 # PAUSED, NOT FORGOTTEN (Aman's own call, 2026-09-05) - Optum, via
