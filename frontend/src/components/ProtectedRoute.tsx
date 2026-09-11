@@ -12,9 +12,21 @@ interface ProtectedRouteProps {
  * Wraps a page that requires login (Home, and later the real jobs
  * pages) - redirects to /login if there's no logged-in user, rather
  * than rendering a page that would just fail on its first API call.
+ *
+ * `isBootstrapping` (added 2026-09-10, alongside the refresh-token
+ * flow) has to be checked BEFORE `!token` below: the access token now
+ * lives in memory only (see useAuth.tsx), so it's null on every fresh
+ * mount even for someone with a fully valid session - only the
+ * bootstrap effect's silent /auth/refresh call can prove that one way
+ * or the other. Redirecting on `!token` alone, without waiting for
+ * that to resolve, would boot an already-logged-in user to /login on
+ * every single page reload.
  */
 export function ProtectedRoute({ children, adminOnly }: ProtectedRouteProps) {
-  const { token, user } = useAuth();
+  const { token, user, isBootstrapping } = useAuth();
+  if (isBootstrapping) {
+    return <p className="job-list-status">Loading…</p>;
+  }
   if (!token) {
     return <Navigate to="/login" replace />;
   }

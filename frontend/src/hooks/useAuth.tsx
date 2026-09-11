@@ -1,14 +1,21 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import * as api from "../api/client";
-import { UnauthorizedError } from "../api/client";
-import type { AuthUser, LoginPayload, RegisterPayload } from "../api/types";
-
-const TOKEN_STORAGE_KEY = "jobwatcher_token";
-const USER_STORAGE_KEY = "jobwatcher_user";
+import type { AuthResponse, AuthUser, LoginPayload, RegisterPayload } from "../api/types";
 
 interface AuthContextValue {
   user: AuthUser | null;
   token: string | null;
+  /**
+   * True only during the ONE silent /auth/refresh attempt on app load
+   * (see the bootstrap effect below) - distinct from `isLoading`,
+   * which covers an explicit login()/register() submission. Exists so
+   * ProtectedRoute.tsx can tell "we don't know yet if there's a valid
+   * session" apart from "we checked, and there genuinely isn't one" -
+   * without it, a page reload would flash straight to /login before
+   * the refresh cookie even got a chance to prove a session still
+   * exists.
+   */
+  isBootstrapping: boolean;
   isLoading: boolean;
   error: string | null;
   login: (payload: LoginPayload) => Promise<void>;
@@ -18,89 +25,74 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-/**
- * Reads whatever was saved from a previous session, if any -
- * localStorage persists across page reloads/browser restarts, unlike
- * plain React state, which is why login state survives a refresh
- * instead of forcing a fresh login every time the page loads.
- * Wrapped in try/catch: a private-browsing tab or blocked site data
- * can make localStorage throw on access, not just return empty - this
- * treats that the same as "nobody's logged in" rather than crashing
- * the whole app on load.
- */
-function loadStoredSession(): { token: string | null; user: AuthUser | null } {
-  try {
-    const token = localStorage.getItem(TOKEN_STORAGE_KEY);
-    const rawUser = localStorage.getItem(USER_STORAGE_KEY);
-    return { token, user: rawUser ? (JSON.parse(rawUser) as AuthUser) : null };
-  } catch {
-    return { token: null, user: null };
-  }
-}
-
-function saveSession(token: string, user: AuthUser): void {
-  try {
-    localStorage.setItem(TOKEN_STORAGE_KEY, token);
-    localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
-  } catch {
-    // Same reasoning as loadStoredSession() above - if storage isn't
-    // available, the user just won't stay logged in across a reload,
-    // which is a degraded experience, not a crash.
-  }
-}
-
-function clearSession(): void {
-  try {
-    localStorage.removeItem(TOKEN_STORAGE_KEY);
-    localStorage.removeItem(USER_STORAGE_KEY);
-  } catch {
-    // Nothing meaningful to do if storage itself is unavailable.
-  }
+function toAuthUser({ access_token: _access_token, token_type: _token_type, ...user }: AuthResponse): AuthUser {
+  return user;
 }
 
 /**
  * Wraps the whole app (see App.tsx) so any component can find out
  * "who's logged in" via useAuth() below, without threading user/token
  * props down through every layer by hand.
+ *
+ * ACCESS TOKEN LIVES IN MEMORY ONLY (changed 2026-09-10, alongside the
+ * refresh-token flow) - deliberately NOT persisted to localStorage
+ * anymore, unlike the single-JWT design this replaced. That's the
+ * actual security property the refresh-token split buys: nothing
+ * readable by an XSS payload survives a page reload. The tradeoff is
+ * exactly what the bootstrap effect below exists to hide - `token`
+ * starts null on every fresh mount, even for someone who never logged
+ * out, so the app can't render anything authenticated until that
+ * effect either succeeds (a valid HttpOnly refresh cookie was still
+ * there) or fails (genuinely logged out / session expired).
  */
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const stored = loadStoredSession();
-  const [user, setUser] = useState<AuthUser | null>(stored.user);
-  const [token, setToken] = useState<string | null>(stored.token);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [token, setToken] = useState<string | null>(null);
+  const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Re-fetches `is_admin` (and everything else) fresh from the server
-  // once per app load, instead of trusting the snapshot cached at
-  // login/register time forever - see fetchCurrentUser()'s own comment
-  // in api/client.ts for the bug this fixes (an admin flag granted
-  // after someone's last login stayed invisible to their still-logged-
-  // in browser). Runs once on mount, not on every token/user change -
-  // login()/register() below already set a fresh, correct user object
-  // themselves, so re-running this right after would just be a
-  // redundant network call.
+  // Registers with client.ts's request() (see setSessionRefreshedHandler's
+  // own docstring) so a SILENT background refresh - triggered mid-
+  // session when an access token expires while the app is already in
+  // use, not just this effect's own explicit call below - still
+  // updates this state. Otherwise the fetch layer would keep working
+  // fine off its own freshly-rotated token while React kept rendering
+  // the stale, already-expired one until the next full page load.
   useEffect(() => {
-    if (!stored.token) return;
+    api.setSessionRefreshedHandler((auth) => {
+      setToken(auth.access_token);
+      setUser(toAuthUser(auth));
+    });
+    return () => api.setSessionRefreshedHandler(null);
+  }, []);
+
+  // The one thing that makes memory-only tokens survive a reload: on
+  // every fresh mount, try to silently trade the HttpOnly refresh
+  // cookie (if the browser still has one) for a new access token,
+  // before rendering anything that assumes a session either way.
+  // Runs once - login()/register() below already set fresh state
+  // themselves, so there's nothing for a mount-time effect to redo
+  // right after either of those.
+  useEffect(() => {
+    let cancelled = false;
+    // tryRefreshSession(), NOT api.refreshSession() directly - shares
+    // the same in-flight guard client.ts's automatic 401-retry uses
+    // (see that function's own docstring). Without it, React 18
+    // StrictMode's development-only double-invoke of this effect would
+    // fire two real /auth/refresh requests carrying the same
+    // not-yet-rotated cookie value, racing each other. Already resolves
+    // to null (never throws) on failure, and already calls the handler
+    // registered above on success - this effect only needs to track
+    // isBootstrapping itself.
     api
-      .fetchCurrentUser(stored.token)
-      .then((freshUser) => {
-        saveSession(stored.token as string, freshUser);
-        setUser(freshUser);
-      })
-      .catch((err) => {
-        // An expired/invalid token - the same case every OTHER
-        // authenticated call treats as "log out", so this does too,
-        // rather than leaving a dead session silently cached.
-        if (err instanceof UnauthorizedError) {
-          clearSession();
-          setToken(null);
-          setUser(null);
-        }
-        // Any other failure (network down, backend unreachable) -
-        // deliberately left alone: keep using the cached snapshot
-        // rather than logging someone out just because this one
-        // best-effort refresh couldn't complete.
+      .tryRefreshSession()
+      .finally(() => {
+        if (!cancelled) setIsBootstrapping(false);
       });
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -109,10 +101,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setError(null);
     try {
       const response = await api.login(payload);
-      const { access_token, ...authUser } = response;
-      saveSession(access_token, authUser);
-      setToken(access_token);
-      setUser(authUser);
+      setToken(response.access_token);
+      setUser(toAuthUser(response));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed.");
       throw err;
@@ -126,10 +116,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setError(null);
     try {
       const response = await api.register(payload);
-      const { access_token, ...authUser } = response;
-      saveSession(access_token, authUser);
-      setToken(access_token);
-      setUser(authUser);
+      setToken(response.access_token);
+      setUser(toAuthUser(response));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed.");
       throw err;
@@ -139,13 +127,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   function logout() {
-    clearSession();
+    // Best-effort - fired and not awaited: the user should end up
+    // logged out in THIS browser immediately regardless of whether the
+    // revoke-on-the-server call itself succeeds (a network blip
+    // shouldn't strand someone in a "still looks logged in" UI). The
+    // cookie is HttpOnly, so there's nothing for the frontend to clear
+    // client-side anyway - only the server can actually revoke/clear it.
+    api.logoutSession().catch(() => {});
     setToken(null);
     setUser(null);
   }
 
   return (
-    <AuthContext.Provider value={{ user, token, isLoading, error, login, register, logout }}>
+    <AuthContext.Provider value={{ user, token, isBootstrapping, isLoading, error, login, register, logout }}>
       {children}
     </AuthContext.Provider>
   );

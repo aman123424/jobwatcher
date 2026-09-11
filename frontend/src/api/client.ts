@@ -1,6 +1,5 @@
 import type {
   AuthResponse,
-  AuthUser,
   CompanyOut,
   CreateCompanyPayload,
   JobScoreOut,
@@ -18,19 +17,74 @@ import type {
  * useJobs.ts) tell "your session expired/is invalid, log in again"
  * apart from every other kind of failure (a genuine network error, a
  * 500, a validation error), which need different handling entirely.
+ *
+ * As of the refresh-token flow (added 2026-09-10), a plain 401 from an
+ * AUTHENTICATED call no longer reaches a caller directly - request()
+ * below tries one silent /auth/refresh first (see tryRefreshSession)
+ * and retries. This is only ever thrown once that retry has also
+ * failed (or wasn't attempted at all, e.g. a bad login/register), so
+ * every existing `if (err instanceof UnauthorizedError) logout()` call
+ * site still means exactly what it always meant: "there is no
+ * recoverable session left, stop trying."
  */
 export class UnauthorizedError extends Error {}
+
+/**
+ * Notified (see useAuth.tsx) whenever request() below silently
+ * refreshes the session in the background - e.g. an access token
+ * expired mid-use, not just the one deliberate bootstrap call on app
+ * load. Lets AuthProvider's React state stay in sync with whatever
+ * token is actually live, without client.ts needing to import React
+ * itself just to hold that state.
+ */
+let onSessionRefreshed: ((auth: AuthResponse) => void) | null = null;
+export function setSessionRefreshedHandler(handler: ((auth: AuthResponse) => void) | null): void {
+  onSessionRefreshed = handler;
+}
+
+// Coalesces concurrent refresh attempts into ONE /auth/refresh call,
+// not one per caller - e.g. several jobs-list calls 401ing at once
+// because the access token expired while all of them were in flight
+// would otherwise each try to rotate the SAME refresh token
+// simultaneously, and only one of those racing calls could ever win
+// (see auth.py's validate_and_rotate_refresh_token - a refresh token
+// is only ever valid for exactly one use). Exported so useAuth.tsx's
+// mount-time bootstrap call goes through this SAME guard, not a
+// separate direct refreshSession() call - React 18 StrictMode
+// double-invokes effects in development, which without this shared
+// promise would fire two real, concurrent /auth/refresh requests
+// carrying the identical not-yet-rotated cookie value, racing each
+// other against the one-time-use rotation above.
+let refreshInFlight: Promise<AuthResponse | null> | null = null;
+
+export function tryRefreshSession(): Promise<AuthResponse | null> {
+  if (!refreshInFlight) {
+    refreshInFlight = refreshSession()
+      .then((auth) => {
+        onSessionRefreshed?.(auth);
+        return auth;
+      })
+      .catch(() => null)
+      .finally(() => {
+        refreshInFlight = null;
+      });
+  }
+  return refreshInFlight;
+}
 
 /**
  * The backend's own address. Configurable via a .env file (Vite only
  * exposes env vars prefixed VITE_ - see .env.example in this project's
  * root) so this doesn't need a code change to point at a different
  * backend later (a deployed one, a different port, etc). Falls back to
- * the backend's own documented local dev address (see api.py's module
- * docstring: `uvicorn api:app --reload` serves on 127.0.0.1:8000 by
- * default) when no .env is present, so a fresh clone works immediately.
+ * "localhost:8000" (NOT "127.0.0.1:8000", even though `uvicorn api:app
+ * --reload` binds the latter by default - see .env.example's own
+ * comment for why: this frontend itself runs on "localhost", and a
+ * browser treats "localhost"/"127.0.0.1" as different SITES for cookie
+ * purposes, which would silently break the refresh-token cookie -
+ * localhost still reaches the same uvicorn process either way).
  */
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
 /**
  * Shared request helper - every function below goes through this one
@@ -48,15 +102,50 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000
  * "401 Unauthorized", since that's the actual message a user should
  * see on a failed login/register attempt.
  */
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+// Paths that must NEVER trigger the retry-after-refresh logic below -
+// a 401 from one of these already IS the final answer (wrong
+// credentials, or the refresh call itself failing), not a stale
+// access token that a refresh could fix. Retrying /auth/refresh on its
+// OWN 401 would recurse forever.
+const NO_REFRESH_RETRY_PATHS = new Set(["/auth/login", "/auth/register", "/auth/refresh"]);
+
+async function request<T>(path: string, options?: RequestInit, _isRetryAfterRefresh = false): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}${path}`, options);
+    // credentials: "include" - required on EVERY call, not just the
+    // ones an Authorization header already covers: it's what makes the
+    // browser (a) actually store the refresh-token cookie login/
+    // register/refresh set via Set-Cookie, and (b) attach that cookie
+    // back on /auth/refresh and /auth/logout. Harmless on every other
+    // call - the cookie's own `path=/auth` (see backend/auth_routes.py)
+    // means the browser only ever attaches it to those two endpoints
+    // regardless of this flag.
+    response = await fetch(`${API_BASE_URL}${path}`, { ...options, credentials: "include" });
   } catch {
     // A network-level failure (backend not running, CORS blocked,
     // DNS/connection refused) never reaches response.ok below - it
     // throws before that.
     throw new Error(`Could not reach the backend at ${API_BASE_URL}. Is it running?`);
+  }
+
+  // A 401 on an AUTHENTICATED call (one that already sent an
+  // Authorization header) most often just means the short-lived access
+  // token expired mid-session, not that the user is actually logged
+  // out - try one silent refresh and replay the exact same request
+  // with the new token before giving up. `_isRetryAfterRefresh` caps
+  // this at one attempt per call, so a refresh that succeeds but still
+  // somehow leaves the retried call 401'ing falls through to the
+  // normal error handling below instead of looping.
+  const authHeader = (options?.headers as Record<string, string> | undefined)?.Authorization;
+  if (response.status === 401 && authHeader && !_isRetryAfterRefresh && !NO_REFRESH_RETRY_PATHS.has(path)) {
+    const refreshed = await tryRefreshSession();
+    if (refreshed) {
+      return request<T>(
+        path,
+        { ...options, headers: { ...options?.headers, Authorization: `Bearer ${refreshed.access_token}` } },
+        true,
+      );
+    }
   }
 
   if (!response.ok) {
@@ -107,16 +196,33 @@ export function login(payload: LoginPayload): Promise<AuthResponse> {
 }
 
 /**
- * GET /auth/me - re-fetches the logged-in user's own info fresh from
- * the database. AuthProvider (see useAuth.tsx) calls this once on app
- * load: login/register only ever set `is_admin` (and everything else)
- * ONCE, at that moment, then cache it in localStorage indefinitely - a
- * flag granted after that stayed invisible to an already-logged-in
- * browser until it happened to log out and back in. This closes that
- * gap without forcing a fresh login.
+ * POST /auth/refresh - exchanges the HttpOnly refresh-token cookie
+ * (attached by the browser automatically; this function never touches
+ * its value) for a brand new access token, and rotates the cookie to a
+ * new refresh token in the same move (see backend/auth.py's
+ * validate_and_rotate_refresh_token). Called two ways: once by
+ * AuthProvider on app load (see useAuth.tsx) to silently re-establish
+ * a session after a reload - the access token itself never survives
+ * one, on purpose, since it's kept in memory only - and internally by
+ * request()'s tryRefreshSession() whenever an access token expires
+ * mid-session. No request body and no Authorization header - the
+ * refresh token IS the credential here, not the (already-expired or
+ * nonexistent) access token.
  */
-export function fetchCurrentUser(token: string): Promise<AuthUser> {
-  return request<AuthUser>("/auth/me", { headers: authHeaders(token) });
+export function refreshSession(): Promise<AuthResponse> {
+  return request<AuthResponse>("/auth/refresh", { method: "POST" });
+}
+
+/**
+ * POST /auth/logout - revokes the current refresh token server-side
+ * and clears its cookie (see backend/auth_routes.py). A 204, so
+ * request() returns undefined here - callers (useAuth.tsx) clear their
+ * own in-memory token/user state separately regardless of whether this
+ * call succeeds, since a failed logout request shouldn't strand
+ * someone in a "still looks logged in" UI.
+ */
+export function logoutSession(): Promise<void> {
+  return request<void>("/auth/logout", { method: "POST" });
 }
 
 /** GET /jobs - "All Jobs": every job posted in the last 24h (or of unknown age), with this user's own status attached where one exists. */

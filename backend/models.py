@@ -177,6 +177,7 @@ class User(Base):
     )
 
     auth_tokens: Mapped[list["AuthToken"]] = relationship(back_populates="user")
+    refresh_tokens: Mapped[list["RefreshToken"]] = relationship(back_populates="user")
     user_jobs: Mapped[list["UserJob"]] = relationship(back_populates="user")
     user_skills: Mapped[list["UserSkill"]] = relationship(back_populates="user")
 
@@ -208,6 +209,54 @@ class AuthToken(Base):
     )
 
     user: Mapped["User"] = relationship(back_populates="auth_tokens")
+
+
+class RefreshToken(Base):
+    """
+    Backs the refresh-token rotation flow (see auth.py) - the
+    long-lived credential behind the HttpOnly `refresh_token` cookie
+    the frontend never touches directly. Deliberately a SEPARATE table
+    from AuthToken above despite the surface similarity ("a token row
+    tied to a user") - AuthToken is for emailed verify/reset links, a
+    genuinely different lifecycle (one-shot, short-lived, never
+    rotated). This table exists specifically because rotation + reuse
+    detection needs real, persisted state to check a presented token
+    against - a signature-only JWT (what the SHORT-lived access token
+    still is - see auth.py's create_access_token) can't do either of
+    those on its own.
+
+    `token_hash`, never the raw token - same reasoning as
+    `password_hash` on User above: if this table ever leaked, the
+    hashes alone can't be replayed as working refresh tokens.
+
+    `family_id` ties every token descended from one login together (the
+    original token from /auth/login, and every token that later
+    replaced it via rotation, all share the same family_id). Revoking
+    an entire family - see auth.py's _revoke_family() - is the actual
+    answer to theft: if an already-rotated-out token gets presented
+    again, that's a strong signal an attacker AND the real user both
+    have a copy, so every token in that chain gets killed, not just the
+    one presented, forcing a real login again on both ends.
+
+    `replaced_by_id` is purely an audit trail (which token superseded
+    this one) - revocation queries key off `family_id`, not this.
+    """
+    __tablename__ = "refresh_tokens"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    family_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
+    expires_at: Mapped["DateTime"] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped["DateTime | None"] = mapped_column(DateTime(timezone=True), nullable=True)
+    replaced_by_id: Mapped["uuid.UUID | None"] = mapped_column(UUID(as_uuid=True), nullable=True)
+    created_at: Mapped["DateTime"] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    user: Mapped["User"] = relationship(back_populates="refresh_tokens")
 
 
 class Company(Base):

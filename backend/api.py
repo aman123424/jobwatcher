@@ -212,6 +212,14 @@ app.add_middleware(
         # rather than removed, in case it's ever used directly again.
         "https://jobwatcher.mykave.in",
     ],
+    # allow_credentials=True (added 2026-09-10, alongside the
+    # refresh-token cookie flow - see auth_routes.py): without this, a
+    # browser strips cookies from cross-origin fetch() calls entirely,
+    # even ones sent with credentials: "include" on the frontend side -
+    # both sides have to opt in. This is exactly why allow_origins above
+    # has to stay an explicit list and can never become "*" - CORS
+    # forbids combining allow_credentials=True with a wildcard origin.
+    allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
