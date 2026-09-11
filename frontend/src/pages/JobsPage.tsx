@@ -19,8 +19,25 @@ const SCROLL_STORAGE_KEY = "jobwatcher:jobsScrollY";
  * removed, so this now IS what a logged-in user lands on directly).
  */
 export function JobsPage() {
-  const { tab, setTab, jobs, isLoading, isRefreshing, error, statusError, updateStatus, refresh, lastRefreshedAt } =
-    useJobs();
+  const {
+    tab,
+    setTab,
+    jobs,
+    isLoading,
+    isRefreshing,
+    error,
+    statusError,
+    updateStatus,
+    refresh,
+    lastRefreshedAt,
+    failedCompanies,
+  } = useJobs();
+  // Collapsed by default - the count alone is the point (a quiet,
+  // always-visible signal that something didn't fetch cleanly,
+  // instead of that silently disappearing into the backend's own
+  // logs) - the actual company names are one click away, not shoved
+  // in front of every refresh whether or not anyone wants to read them.
+  const [showFailedCompanies, setShowFailedCompanies] = useState(false);
   // Company-name search (Aman's own sketch, 2026-09-03) - filters
   // whatever the active tab already loaded, client-side. Deliberately
   // NOT sent to the backend as a query param: the jobs for a tab are
@@ -78,11 +95,46 @@ export function JobsPage() {
       <AppHeader />
 
       <div className="refresh-row">
-        <button type="button" className="refresh-button" onClick={refresh} disabled={isRefreshing}>
+        <button
+          type="button"
+          className="refresh-button"
+          onClick={() => {
+            setShowFailedCompanies(false);
+            void refresh();
+          }}
+          disabled={isRefreshing}
+        >
           {isRefreshing ? "Refreshing…" : "Refresh Jobs"}
         </button>
         {lastRefreshedAt && <span className="last-refreshed">Last fetched {lastRefreshedAt}</span>}
       </div>
+
+      {/* A quiet, always-visible failure signal (Aman's own explicit
+          ask, 2026-09-12) - previously a company whose fetch genuinely
+          broke (a real network/API error, not just "zero open roles
+          right now") was indistinguishable from one with nothing new,
+          visible only in backend logs nobody was watching. Collapsed
+          to just the count by default; the company names themselves
+          are one click away, not forced in front of every refresh. */}
+      {failedCompanies.length > 0 && (
+        <div className="failed-companies-row">
+          <button
+            type="button"
+            className="failed-companies-toggle"
+            onClick={() => setShowFailedCompanies((prev) => !prev)}
+            aria-expanded={showFailedCompanies}
+          >
+            {failedCompanies.length} {failedCompanies.length === 1 ? "company" : "companies"} failed to fetch
+          </button>
+          {showFailedCompanies && (
+            <ul className="failed-companies-list">
+              {failedCompanies.map((name) => (
+                <li key={name}>{name}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       <div className="jobs-filter-row">
         <input

@@ -71,7 +71,7 @@ def ingest_relevant_jobs() -> dict:
         # original seeded set. `.value` unwraps the Platform enum back
         # to the plain string FETCHERS is keyed by.
         company_tuples = [(c.name, c.platform.value, c.slug) for c in company_rows]
-        all_jobs = fetch_all_jobs(company_tuples)
+        all_jobs, failed_companies = fetch_all_jobs(company_tuples)
         relevant_jobs = [
             j for j in all_jobs
             if is_relevant_title(j["title"])
@@ -127,6 +127,7 @@ def ingest_relevant_jobs() -> dict:
             "inserted": inserted,
             "updated": updated,
             "skipped_unknown_company": skipped_unknown_company,
+            "failed_companies": failed_companies,
         }
     finally:
         db.close()

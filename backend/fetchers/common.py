@@ -14,7 +14,61 @@ later. See PROJECT_LOG.md / this package's own __init__.py docstring
 for the full "why a package, not one 1500-line file" reasoning.
 """
 
+import threading
+
 import requests
+
+# --- Per-company fetch-failure tracking (added 2026-09-12) ---
+#
+# WHY THIS EXISTS: every fetch_* function already catches its own
+# request-level failures and returns [] instead of crashing (see this
+# package's own __init__.py docstring) - correct for keeping one bad
+# company from stopping the whole run, but it means a company that's
+# genuinely down looks IDENTICAL to a company that just has zero open
+# roles right now, from every caller's point of view. Aman asked for
+# that distinction to actually be visible (a small red "N companies
+# failed" count under the Refresh Jobs button, not just a silent
+# empty result) - this is the shared, minimal-footprint mechanism that
+# makes it possible without changing every fetch_* function's return
+# type or its established "always return list[dict], never raise"
+# contract.
+#
+# HOW IT WORKS: main.py's fetch_one_company() calls
+# set_current_company() once, right before calling that company's
+# fetch_fn - since each worker thread in the pool only ever works on
+# ONE company at a time (synchronously, no nested threading within a
+# single company's own fetch), a plain threading.local() is enough to
+# correctly attribute a failure to the right company even with
+# MAX_CONCURRENT_FETCHES companies genuinely fetching in parallel.
+# _safe_get/_safe_get_text below call record_fetch_failure() at their
+# existing [WARN] print sites - that alone covers every fetcher except
+# workday.py and oracle_cloud.py, which build their OWN requests
+# outside these two helpers (custom POST body / pagination) and so
+# call record_fetch_failure() directly at their own warn sites instead.
+_current_company = threading.local()
+_failures_lock = threading.Lock()
+_failed_companies: list[str] = []
+
+
+def set_current_company(display_name: str) -> None:
+    _current_company.name = display_name
+
+
+def record_fetch_failure(reason: str) -> None:
+    """Called from a [WARN]-printing except block - records THIS THREAD's current company (set by set_current_company) as failed. Deduped: a company that fails on, say, 3 separate Workday pagination pages still only appears once in the final list, not three times."""
+    company = getattr(_current_company, "name", None) or "unknown company"
+    with _failures_lock:
+        if company not in _failed_companies:
+            _failed_companies.append(company)
+
+
+def get_and_clear_failed_companies() -> list[str]:
+    """Called once at the end of fetch_all_jobs() (main.py) - returns everything recorded since the last call and resets the shared list, so failures from a PREVIOUS /refresh run (this list is module-level, shared across requests within the same running process) never leak into the next one's result."""
+    with _failures_lock:
+        result = list(_failed_companies)
+        _failed_companies.clear()
+    return result
+
 
 # A single shared "session" object, reused across all requests.
 # WHY: each request through a session can reuse the same underlying
@@ -55,11 +109,13 @@ def _safe_get(url, **kwargs):
         # This catches: connection errors, timeouts, DNS failures,
         # and (because of raise_for_status above) HTTP error codes.
         print(f"  [WARN] request failed for {url}: {e}")
+        record_fetch_failure(str(e))
         return None
     except ValueError as e:
         # json() raises ValueError if the response body isn't valid
         # JSON at all (e.g. the API returned an HTML error page).
         print(f"  [WARN] bad JSON from {url}: {e}")
+        record_fetch_failure(str(e))
         return None
 
 
@@ -77,6 +133,7 @@ def _safe_get_text(url, **kwargs):
         return resp.text
     except requests.exceptions.RequestException as e:
         print(f"  [WARN] request failed for {url}: {e}")
+        record_fetch_failure(str(e))
         return None
 
 

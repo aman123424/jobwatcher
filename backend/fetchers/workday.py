@@ -5,7 +5,7 @@ import requests
 from job_dates import workday_posted_on_days
 from scoring import is_relevant_title
 
-from .common import FRESHNESS_WINDOW_DAYS, SESSION, TIMEOUT, _safe_get
+from .common import FRESHNESS_WINDOW_DAYS, SESSION, TIMEOUT, _safe_get, record_fetch_failure
 
 
 def fetch_workday(display_name: str, tenant_wd_site: str) -> list[dict]:
@@ -81,6 +81,7 @@ def fetch_workday(display_name: str, tenant_wd_site: str) -> list[dict]:
     if len(parts) != 3:
         print(f"  [WARN] {display_name}: malformed Workday identifier "
               f"'{tenant_wd_site}' (expected tenant|wdN|site) - skipping")
+        record_fetch_failure(f"malformed Workday identifier '{tenant_wd_site}'")
         return []
     tenant, wd_num, site = parts
 
@@ -108,14 +109,17 @@ def fetch_workday(display_name: str, tenant_wd_site: str) -> list[dict]:
             data = resp.json()
         except requests.exceptions.RequestException as e:
             print(f"  [WARN] request failed for {url}: {e}")
+            record_fetch_failure(str(e))
             break
         except ValueError as e:
             print(f"  [WARN] bad JSON from {url}: {e}")
+            record_fetch_failure(str(e))
             break
 
         if not isinstance(data, dict):
             print(f"  [WARN] unexpected response shape from {url}: "
                   f"expected a JSON object, got {type(data).__name__}")
+            record_fetch_failure(f"unexpected response shape from {url}")
             break
 
         postings = data.get("jobPostings", [])

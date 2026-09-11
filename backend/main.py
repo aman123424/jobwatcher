@@ -40,6 +40,7 @@ from datetime import datetime, timezone
 
 from companies import TIER1_COMPANIES, TIER2_COMPANIES, ORACLE_COMPANIES, CUSTOM_COMPANIES
 from fetchers import FETCHERS
+from fetchers.common import get_and_clear_failed_companies, record_fetch_failure, set_current_company
 from scoring import score_job, is_relevant_title, is_india_location, is_recently_posted
 from state import load_seen, save_seen, split_new_jobs
 
@@ -70,7 +71,7 @@ LOG_FILE = os.path.join(os.path.dirname(__file__), "matches_log.csv")
 MAX_CONCURRENT_FETCHES = 10
 
 
-def fetch_all_jobs(companies: list[tuple] | None = None) -> list[dict]:
+def fetch_all_jobs(companies: list[tuple] | None = None) -> tuple[list[dict], list[str]]:
     """
     Fetch every given company and collect everything into one flat
     list — but, as of 2026-08-27, up to MAX_CONCURRENT_FETCHES
@@ -130,9 +131,21 @@ def fetch_all_jobs(companies: list[tuple] | None = None) -> list[dict]:
     the others from being checked - the same "isolate failures"
     principle fetchers.py itself uses internally, applied one level up,
     unchanged from before this concurrency change.
+
+    RETURNS A (jobs, failed_companies) TUPLE (changed 2026-09-12), not
+    just the jobs list - see fetchers/common.py's own module docstring
+    for the full "why": a company whose fetch genuinely broke used to
+    look IDENTICAL to a company with zero open roles right now, from
+    every caller's point of view. `set_current_company()` below tells
+    fetchers/common.py's shared failure tracker which company THIS
+    thread is currently working on, so a failure recorded deep inside
+    a fetch_* function (or _safe_get, called from several of them) gets
+    attributed to the right company without every fetch_* function's
+    signature needing to change.
     """
     def fetch_one_company(company: tuple) -> list[dict]:
         display_name, platform, slug = company
+        set_current_company(display_name)
         fetch_fn = FETCHERS[platform]  # look up the right function for this platform
         try:
             jobs = fetch_fn(display_name, slug)
@@ -145,10 +158,17 @@ def fetch_all_jobs(companies: list[tuple] | None = None) -> list[dict]:
             # parsing code hitting a response shape we didn't expect.
             # We still don't want this to kill the whole run.
             print(f"  {display_name:20s} ({platform:16s}): FAILED - {e}")
+            record_fetch_failure(str(e))
             return []
 
     if companies is None:
         companies = ALL_COMPANIES
+
+    # Reset before this run - a leftover failure from a PREVIOUS
+    # /refresh (fetchers/common.py's failure list is module-level,
+    # shared across requests within the same running process/Lambda
+    # container) must never bleed into this run's result.
+    get_and_clear_failed_companies()
 
     all_jobs = []
     # `with ... as executor:` creates the thread pool and guarantees
@@ -160,7 +180,9 @@ def fetch_all_jobs(companies: list[tuple] | None = None) -> list[dict]:
         futures = [executor.submit(fetch_one_company, company) for company in companies]
         for future in as_completed(futures):
             all_jobs.extend(future.result())
-    return all_jobs
+
+    failed_companies = get_and_clear_failed_companies()
+    return all_jobs, failed_companies
 
 
 def append_to_log(new_matches: list[dict]) -> None:
@@ -217,7 +239,12 @@ def fetch_and_score_all() -> dict:
                                 score included, not just qualifying ones... ],
         }
     """
-    all_jobs = fetch_all_jobs()
+    all_jobs, _failed_companies = fetch_all_jobs()
+    # _failed_companies deliberately unused here - this legacy CLI/
+    # terminal path already prints per-company FAILED lines directly
+    # (see fetch_one_company above) as the run happens; only the real
+    # production path (ingest.py, behind POST /refresh) needs this
+    # surfaced further, into the UI.
     # Three independent filters, all applied before scoring: title has
     # to look like a Software Engineer role, location has to look
     # India-based (see is_india_location()'s docstring in scoring.py),

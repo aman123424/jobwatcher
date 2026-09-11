@@ -76,6 +76,8 @@ export interface RefreshSummary {
   inserted: number;
   updated: number;
   skipped_unknown_company: number;
+  /** Display names of every company whose fetch genuinely failed this run (not just "zero open roles right now") - see backend's RefreshSummary docstring. */
+  failed_companies: string[];
 }
 
 /**

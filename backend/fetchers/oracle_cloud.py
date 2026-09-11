@@ -5,7 +5,7 @@ import requests
 from job_dates import oracle_cloud_posted_date_days
 from scoring import is_relevant_title
 
-from .common import FRESHNESS_WINDOW_DAYS, SESSION, TIMEOUT
+from .common import FRESHNESS_WINDOW_DAYS, SESSION, TIMEOUT, record_fetch_failure
 
 # 25 - Oracle's own Candidate Experience frontend requests this many at
 # a time in the real browser network capture this fetcher is built
@@ -84,6 +84,7 @@ def fetch_oracle_cloud(display_name: str, tenant_dc_site: str) -> list[dict]:
     if len(parts) != 3:
         print(f"  [WARN] {display_name}: malformed Oracle Cloud identifier "
               f"'{tenant_dc_site}' (expected tenant|dc|site) - skipping")
+        record_fetch_failure(f"malformed Oracle Cloud identifier '{tenant_dc_site}'")
         return []
     tenant, dc, site = parts
 
@@ -109,14 +110,17 @@ def fetch_oracle_cloud(display_name: str, tenant_dc_site: str) -> list[dict]:
             data = resp.json()
         except requests.exceptions.RequestException as e:
             print(f"  [WARN] request failed for {list_url} (offset={offset}): {e}")
+            record_fetch_failure(str(e))
             break
         except ValueError as e:
             print(f"  [WARN] bad JSON from {list_url} (offset={offset}): {e}")
+            record_fetch_failure(str(e))
             break
 
         if not isinstance(data, dict):
             print(f"  [WARN] unexpected response shape from {list_url}: "
                   f"expected a JSON object, got {type(data).__name__}")
+            record_fetch_failure(f"unexpected response shape from {list_url}")
             break
 
         items = data.get("items") or []
@@ -202,9 +206,11 @@ def _enrich_oracle_cloud_descriptions(jobs: list[dict], base_url: str, site: str
             data = resp.json()
         except requests.exceptions.RequestException as e:
             print(f"  [WARN] request failed for {detail_url} (job {job['job_id']}): {e}")
+            record_fetch_failure(str(e))
             continue
         except ValueError as e:
             print(f"  [WARN] bad JSON from {detail_url} (job {job['job_id']}): {e}")
+            record_fetch_failure(str(e))
             continue
 
         if not isinstance(data, dict):

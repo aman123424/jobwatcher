@@ -278,12 +278,20 @@ class RefreshSummary(BaseModel):
     """What POST /refresh returns - counts, not the jobs themselves.
     Callers that want the actual jobs call GET /jobs separately, which
     is also where per-user status gets attached - a bare fetch/ingest
-    pass has no concept of "which user" to attach status for."""
+    pass has no concept of "which user" to attach status for.
+
+    `failed_companies` (added 2026-09-12) - display names of every
+    company whose fetch hit a real problem this run (a request that
+    genuinely failed, not just "zero open roles right now") - see
+    backend/fetchers/common.py's own module docstring for how this is
+    tracked. Deduped, but otherwise unordered (ThreadPoolExecutor
+    fetches companies concurrently - see main.py's fetch_all_jobs)."""
     all_jobs_count: int
     relevant_jobs_count: int
     inserted: int
     updated: int
     skipped_unknown_company: int
+    failed_companies: list[str] = []
 
 
 # India Standard Time is a fixed +5:30 offset from UTC year-round (it

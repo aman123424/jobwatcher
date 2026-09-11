@@ -94,6 +94,13 @@ export function useJobs() {
   // returns it, so it stays current after every tab switch too, not
   // just right after clicking Refresh.
   const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
+  // From the MOST RECENT refresh's own RefreshSummary - unlike
+  // lastRefreshedAt above, this is deliberately NOT persisted anywhere
+  // (no shared backend field for it) and resets to [] on every new
+  // refresh attempt, not carried over from a previous one - a stale
+  // "3 companies failed" notice from an hour ago would be actively
+  // misleading once a fresh refresh has run since then.
+  const [failedCompanies, setFailedCompanies] = useState<string[]>([]);
 
   const loadTab = useCallback(
     async (nextTab: JobsTab) => {
@@ -204,8 +211,10 @@ export function useJobs() {
     if (!token) return;
     setIsRefreshing(true);
     setError(null);
+    setFailedCompanies([]);
     try {
-      await refreshJobs(token);
+      const summary = await refreshJobs(token);
+      setFailedCompanies(summary.failed_companies);
       // The refresh itself doesn't return per-user data (it's a
       // shared action, see refreshJobs()'s own docstring) - reload
       // whichever tab is currently showing so the UI reflects the
@@ -224,5 +233,17 @@ export function useJobs() {
     }
   }, [token, tab, loadTab, logout]);
 
-  return { tab, setTab, jobs, isLoading, isRefreshing, error, statusError, updateStatus, refresh, lastRefreshedAt };
+  return {
+    tab,
+    setTab,
+    jobs,
+    isLoading,
+    isRefreshing,
+    error,
+    statusError,
+    updateStatus,
+    refresh,
+    lastRefreshedAt,
+    failedCompanies,
+  };
 }
