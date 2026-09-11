@@ -2,6 +2,7 @@ import "./AppHeader.scss";
 import { AvatarMenu } from "./AvatarMenu";
 import { ThemeToggle } from "./ThemeToggle";
 import { useAuth } from "../hooks/useAuth";
+import { useNavigate } from "react-router-dom";
 
 /**
  * The "JobWatcher" title + theme toggle + avatar dropdown row - shared
@@ -11,10 +12,18 @@ import { useAuth } from "../hooks/useAuth";
  */
 export function AppHeader() {
   const { user } = useAuth();
+  const navigate = useNavigate();
 
   return (
     <header className="jobs-page-header">
-      <h1>JobWatcher</h1>
+      <h1
+        onClick={(e) => {
+          e.preventDefault();
+          navigate("/");
+        }}
+      >
+        JobWatcher
+      </h1>
       <div className="jobs-page-header-right">
         <ThemeToggle />
         {user && <AvatarMenu name={user.name} />}
