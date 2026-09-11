@@ -134,8 +134,11 @@ TIER2_COMPANIES = [
     ("Baxter",       "workday", "baxter|wd1|baxter"),
 ]
 
-# tenant_dc_site format: "tenant|dc|site" - see fetch_oracle_cloud()'s
-# docstring in fetchers/oracle_cloud.py for exactly what each part means.
+# tenant_dc_site format: "tenant|dc|site" - dc CAN BE EMPTY (e.g.
+# "jpmc||CX_1001") for tenants whose real hostname has no datacenter
+# segment at all - see fetch_oracle_cloud()'s docstring in
+# fetchers/oracle_cloud.py for exactly what each part means and why an
+# empty dc isn't a placeholder.
 # Oracle Cloud was previously written off entirely (see PROJECT_LOG.md
 # Tier 3 section - "no public API, JS-only career site") after only
 # checking a career page's HTML source for a server-rendered fallback.

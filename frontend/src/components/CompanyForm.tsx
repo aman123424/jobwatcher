@@ -76,7 +76,8 @@ export function CompanyForm({
         <p className="auth-subtitle">
           The platform-specific identifier used to fetch this company's board - a plain board slug for most
           platforms, but a compound "|"-separated string for a few (e.g. Workday's "tenant|wdN|site", or Oracle's
-          "tenant|dc|site").
+          "tenant|dc|site" - leave dc empty, e.g. "jpmc||CX_1001", for a tenant whose real URL has no datacenter
+          segment).
         </p>
 
         {error && <p className="auth-error">{error}</p>}

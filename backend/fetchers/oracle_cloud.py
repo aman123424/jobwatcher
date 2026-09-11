@@ -52,6 +52,19 @@ def fetch_oracle_cloud(display_name: str, tenant_dc_site: str) -> list[dict]:
     We split this apart below to build both the search URL and the
     per-job detail URL.
 
+    dc CAN BE EMPTY (added 2026-09-12) - e.g. "jpmc||CX_1001". Confirmed
+    live that some tenants' hostnames genuinely have no datacenter
+    segment at all: JPMC's real, network-captured URL is
+    "jpmc.fa.oraclecloud.com/hcmRestApi/...", not
+    "jpmc.fa.{something}.oraclecloud.com" - this isn't a placeholder or
+    a slug someone forgot to fill in, it's a real, different hostname
+    shape. An empty middle segment in the slug means "omit this part of
+    the hostname entirely," not "insert nothing where a value should
+    be" - see the base_url construction below for exactly how that's
+    handled (the difference matters: naively formatting an empty dc
+    into the Honeywell/TI-shaped template would build
+    "jpmc.fa..oraclecloud.com" - a broken, double-dot host that 404s).
+
     URL AND METHOD: a GET request with the search criteria packed into
     one `finder` query parameter (Oracle's own REST convention, not
     something built ad hoc here) - `findReqs;siteNumber={site},
@@ -88,7 +101,10 @@ def fetch_oracle_cloud(display_name: str, tenant_dc_site: str) -> list[dict]:
         return []
     tenant, dc, site = parts
 
-    base_url = f"https://{tenant}.fa.{dc}.oraclecloud.com"
+    # See the docstring's "dc CAN BE EMPTY" section above - an empty dc
+    # means the real hostname has no datacenter segment at all (e.g.
+    # JPMC), not that one should be inserted blank.
+    base_url = f"https://{tenant}.fa.{dc}.oraclecloud.com" if dc else f"https://{tenant}.fa.oraclecloud.com"
     list_url = f"{base_url}/hcmRestApi/resources/latest/recruitingCEJobRequisitions"
 
     jobs = []
