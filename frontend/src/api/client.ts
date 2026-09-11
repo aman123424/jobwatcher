@@ -10,6 +10,7 @@ import type {
   RefreshSummary,
   RegisterPayload,
   SetJobScorePayload,
+  TailoringReportOut,
 } from "./types";
 
 /**
@@ -225,4 +226,16 @@ export function saveJobScore(token: string, jobId: string, payload: SetJobScoreP
     headers: { ...authHeaders(token), "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+}
+
+/**
+ * GET /jobs/{id}/tailoring-report - admin-only; returns this admin's
+ * existing tailoring report for this job, or computes one lazily via
+ * fitmodel (see backend/api.py's get_tailoring_report) on first call.
+ * Throws a plain Error (via request()'s normal handling) whose message
+ * is the backend's 503 detail when fitmodel isn't deployed yet - see
+ * TailoringReportPage.tsx for how that's shown, not treated as a crash.
+ */
+export function fetchTailoringReport(token: string, jobId: string): Promise<TailoringReportOut> {
+  return request<TailoringReportOut>(`/jobs/${jobId}/tailoring-report`, { headers: authHeaders(token) });
 }

@@ -11,6 +11,7 @@ import { JobsPage } from "./pages/JobsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { RegisterPage } from "./pages/RegisterPage";
+import { TailoringReportPage } from "./pages/TailoringReportPage";
 
 /**
  * Pure composition, same principle the old single-page version of
@@ -73,6 +74,14 @@ function App() {
               element={
                 <ProtectedRoute adminOnly>
                   <JobScorePage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/jobs/:id/tailoring"
+              element={
+                <ProtectedRoute adminOnly>
+                  <TailoringReportPage />
                 </ProtectedRoute>
               }
             />

@@ -26,6 +26,35 @@ def test_synonym_mismatch_for_rest_api_framework():
     assert isinstance(results, list)
 
 
+def test_draft_bullet_never_fabricates_unrelated_claim():
+    # CONFIRMED REAL BUG this locks in: drafting used to append
+    # "explicitly using kubernetes" onto an unrelated Google Workspace
+    # bullet, purely because embedding similarity between the short
+    # term and that sentence happened to be non-trivial. draft_bullet
+    # must be None whenever there's no genuine lexical basis (BM25 > 0)
+    # for the claim - see tailoring.py's own module docstring.
+    jd = "Required Qualifications: 2+ years experience with Kubernetes and Kafka for backend microservices."
+    results = suggest(_chunks, jd, embedding_index=_extractor.embedding_index)
+    kubernetes_result = next((r for r in results if r["jd_term"] == "kubernetes"), None)
+    assert kubernetes_result is not None
+    assert kubernetes_result["draft_bullet"] is None
+    for r in results:
+        if r["draft_bullet"]:
+            assert "google workspace" not in r["draft_bullet"].lower()
+
+
+def test_draft_bullet_present_when_real_lexical_overlap_exists():
+    # "digitalocean" is unverified (listed in RESUME_SKILLS, not
+    # EVIDENTIAL_SKILLS) but genuinely appears in a real bullet
+    # ("deployed on DigitalOcean") - a real basis to draft from.
+    jd = "Required Qualifications: experience deploying applications on DigitalOcean."
+    results = suggest(_chunks, jd, embedding_index=_extractor.embedding_index)
+    result = next((r for r in results if r["jd_term"] == "digitalocean"), None)
+    assert result is not None
+    assert result["draft_bullet"] is not None
+    assert "digitalocean" in result["draft_bullet"].lower()
+
+
 def test_no_suggestions_for_stopword_only_text():
     # required_section_text() falls back to the FULL haystack when no
     # Required/Preferred headers exist at all (matches
@@ -40,5 +69,7 @@ def test_no_suggestions_for_stopword_only_text():
 if __name__ == "__main__":
     test_true_gap_detected()
     test_synonym_mismatch_for_rest_api_framework()
+    test_draft_bullet_never_fabricates_unrelated_claim()
+    test_draft_bullet_present_when_real_lexical_overlap_exists()
     test_no_suggestions_for_stopword_only_text()
     print("All suggestion tests passed.")

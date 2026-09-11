@@ -41,7 +41,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from db import Base
@@ -417,6 +417,50 @@ class JobScore(Base):
     source: Mapped[JobScoreSource] = mapped_column(nullable=False)
     updated_at: Mapped["DateTime"] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    user: Mapped["User"] = relationship()
+    job: Mapped["Job"] = relationship()
+
+
+class TailoringReport(Base):
+    """
+    A deterministic resume-tailoring report (skill gaps, unverified
+    skills, wording mismatches, template-drafted bullet edits) for one
+    (user, job) pair - added 2026-09-06 alongside fitmodel/, the
+    separate classical ML/IR component that actually computes these
+    (see fitmodel/suggestions/tailoring.py). Same shape as JobScore
+    directly above, for the exact same reason: a tailoring report is
+    inherently resume-specific, so it can never live on the shared
+    `jobs` row - and the same "computed lazily, only when a job is
+    actually opened, not for every job at every refresh" rule JobScore
+    already follows applies here too (see api.py's
+    GET /jobs/{job_id}/tailoring-report for where that's enforced).
+
+    `suggestions` is the JSON list fitmodel's POST /tailor returns
+    verbatim - each entry {type, jd_term, resume_key, message,
+    draft_bullet} (see tailoring.py's own docstring for what each of
+    those five means and why draft_bullet is None for real gaps).
+    Stored as-is rather than normalized into its own table: this data
+    is written once per (user, job) and only ever read back whole, so
+    a second table with a foreign key back to this one would add a
+    join for no real benefit - same reasoning JobScore's own flat
+    `reasoning: Text` column already uses for its LLM-shaped text.
+
+    Admin-only for now, same reason as JobScore: only Aman's own resume
+    is behind RESUME_SKILLS/fitmodel's resume.json right now.
+    """
+    __tablename__ = "tailoring_reports"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), primary_key=True
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id"), primary_key=True
+    )
+    suggestions: Mapped[list[dict]] = mapped_column(JSONB, nullable=False)
+    computed_at: Mapped["DateTime"] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
     user: Mapped["User"] = relationship()

@@ -138,3 +138,30 @@ export interface SetJobScorePayload {
   score: number;
   reasoning: string;
 }
+
+/**
+ * One deterministic resume-tailoring suggestion - mirrors backend/
+ * api.py's TailoringSuggestionOut (itself a passthrough of whatever
+ * fitmodel/suggestions/tailoring.py's suggest() returns, stored as-is
+ * in tailoring_reports.suggestions - see that module's own docstring
+ * for what each `type` means). `draft_bullet` is a TEMPLATE-FILLED
+ * starting point, not finished prose - null whenever there's no real
+ * existing resume content to build one from (always null for
+ * "true_gap"; sometimes null for the other two types too, when no
+ * bullet had genuine lexical overlap with the JD term).
+ */
+export interface TailoringSuggestionOut {
+  type: "true_gap" | "unverified" | "wording_mismatch";
+  jd_term: string;
+  resume_key: string | null;
+  message: string;
+  draft_bullet: string | null;
+}
+
+/** One job's resume-tailoring report - mirrors backend/api.py's TailoringReportOut. */
+export interface TailoringReportOut {
+  job_id: string;
+  title: string;
+  company_name: string;
+  suggestions: TailoringSuggestionOut[];
+}

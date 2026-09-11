@@ -1,0 +1,86 @@
+.tailoring-page-header {
+  margin-bottom: 16px;
+}
+
+.tailoring-suggestion-list {
+  list-style: none;
+  margin: 20px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.tailoring-suggestion {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+
+.tailoring-suggestion-true_gap {
+  border-left-color: #d9534f;
+}
+
+.tailoring-suggestion-unverified {
+  border-left-color: #e0a800;
+}
+
+.tailoring-suggestion-wording_mismatch {
+  border-left-color: var(--accent);
+}
+
+.tailoring-suggestion-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.tailoring-suggestion-term {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--text-h);
+}
+
+.tailoring-suggestion-type-badge {
+  font-size: 12px;
+  color: var(--text);
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
+.tailoring-suggestion-message {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 150%;
+}
+
+.tailoring-suggestion-draft {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--code-bg);
+  border-radius: 6px;
+}
+
+.tailoring-suggestion-draft-label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  opacity: 0.7;
+  margin-bottom: 4px;
+}
+
+.tailoring-suggestion-draft-text {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-h);
+  line-height: 150%;
+}

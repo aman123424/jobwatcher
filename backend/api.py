@@ -126,9 +126,11 @@ auto-generates an interactive page there where you can try any
 endpoint with one click, no curl/Postman/frontend needed.
 """
 
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
+import requests
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -138,9 +140,34 @@ from auth import get_current_admin, get_current_user
 from auth_routes import router as auth_router
 from db import get_db
 from ingest import ingest_relevant_jobs
-from models import Company, Job, JobScore, JobScoreSource, JobStatus, Platform, RefreshLog, TrainingExample, User, UserJob
+from models import (
+    Company,
+    Job,
+    JobScore,
+    JobScoreSource,
+    JobStatus,
+    Platform,
+    RefreshLog,
+    TailoringReport,
+    TrainingExample,
+    User,
+    UserJob,
+)
 from scoring import REFRESH_WINDOW_HOURS, score_job
 from scoring import strip_html as strip_html_for_display
+
+# Unset until fitmodel (a separate component - see fitmodel/README.md)
+# is actually deployed as its own service; GET /jobs/{id}/tailoring-report
+# below checks for that and returns a clear 503 rather than crashing,
+# so this endpoint is safe to ship ahead of that deployment decision.
+FITMODEL_SERVICE_URL = os.environ.get("FITMODEL_SERVICE_URL")
+# Generous on purpose: fitmodel's embedding model can take 20-30s+ to
+# load on a cold start (see fitmodel/features/embedding_features.py).
+# Safe to wait this long here specifically because this endpoint is
+# ONLY ever hit lazily, one job at a time, when a job is actually
+# opened - never inside /refresh's synchronous hot path (see that
+# endpoint's own docstring for why THAT one has real timeout history).
+FITMODEL_REQUEST_TIMEOUT_SECONDS = 45
 
 app = FastAPI(
     title="jobwatch API",
@@ -989,5 +1016,93 @@ def set_job_score(
     db.refresh(existing)
 
     return _to_job_score_out(job, existing)
+
+
+class TailoringSuggestionOut(BaseModel):
+    type: str
+    jd_term: str
+    resume_key: str | None
+    message: str
+    draft_bullet: str | None
+
+
+class TailoringReportOut(BaseModel):
+    job_id: str
+    title: str
+    company_name: str
+    suggestions: list[TailoringSuggestionOut]
+
+
+def _fetch_tailoring_suggestions(job: Job) -> list[dict]:
+    """
+    Calls fitmodel's own POST /tailor (see fitmodel/service.py) - a
+    plain synchronous REST call, not event-driven (see the earlier
+    architecture discussion this was built from: there's exactly one
+    caller and one answer needed immediately, which is what a REST
+    call is for). Raises HTTPException directly rather than letting a
+    connection failure surface as a raw 500 - fitmodel not being
+    reachable is an expected, handleable state (not deployed yet,
+    briefly down, cold-starting past the timeout), not a bug in this
+    endpoint.
+    """
+    try:
+        response = requests.post(
+            f"{FITMODEL_SERVICE_URL}/tailor",
+            json={"title": job.title, "raw_description": job.raw_description or ""},
+            timeout=FITMODEL_REQUEST_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+    except requests.RequestException as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"fitmodel service call failed: {e}",
+        ) from e
+    return response.json()["suggestions"]
+
+
+@app.get("/jobs/{job_id}/tailoring-report", response_model=TailoringReportOut)
+def get_tailoring_report(job_id: str, db: Session = Depends(get_db), admin: User = Depends(get_current_admin)):
+    """
+    Admin-only, lazy compute-on-first-view - the SAME rule
+    GET /jobs/{job_id}/score already follows (see that endpoint's own
+    docstring above) applied to fitmodel's tailoring reports instead
+    of the regex match score: nothing computed at refresh time, a
+    report only ever gets built the moment this specific job is
+    actually opened, then cached in `tailoring_reports` for next time.
+
+    If FITMODEL_SERVICE_URL isn't set - the real state until fitmodel
+    is deployed as its own service (see fitmodel/README.md and the
+    implementation plan this shipped from - deploying it needs a
+    container-image Lambda, a deliberately separate later decision) -
+    returns 503 rather than crashing, so this endpoint is safe to ship
+    ahead of that deployment.
+    """
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    existing = (
+        db.query(TailoringReport)
+        .filter(TailoringReport.user_id == admin.id, TailoringReport.job_id == job_id)
+        .first()
+    )
+    if existing is None:
+        if not FITMODEL_SERVICE_URL:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Tailoring reports aren't available yet - fitmodel isn't deployed (FITMODEL_SERVICE_URL is unset).",
+            )
+        suggestions = _fetch_tailoring_suggestions(job)
+        existing = TailoringReport(user_id=admin.id, job_id=job_id, suggestions=suggestions)
+        db.add(existing)
+        db.commit()
+        db.refresh(existing)
+
+    return TailoringReportOut(
+        job_id=str(job.id),
+        title=job.title,
+        company_name=job.company.name,
+        suggestions=existing.suggestions,
+    )
 
 

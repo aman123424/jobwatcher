@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import "./JobScorePage.scss";
 import { fetchJobScore, saveJobScore, UnauthorizedError } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
@@ -134,7 +134,8 @@ export function JobScorePage() {
         {companyName} ·{" "}
         <a href={link} target="_blank" rel="noreferrer">
           View posting
-        </a>
+        </a>{" "}
+        · <Link to={`/jobs/${id}/tailoring`}>View tailoring suggestions</Link>
       </p>
 
       <div className="score-page-columns">
