@@ -37,7 +37,28 @@ export function JobsPage() {
   // instead of that silently disappearing into the backend's own
   // logs) - the actual company names are one click away, not shoved
   // in front of every refresh whether or not anyone wants to read them.
+  //
+  // POPOVER, NOT AN INLINE LIST (reworked 2026-09-12, after Aman's own
+  // feedback that the first version - a <ul> in normal document flow -
+  // shoved the search bar and every job card down the instant it
+  // opened, reading as if the whole page had navigated somewhere else.
+  // Same "position: absolute, closes on an outside click" pattern
+  // AvatarMenu.tsx already uses for its dropdown - see that component
+  // for the precedent this mirrors) - the popover floats OVER the page
+  // instead of pushing it, so opening/closing it never moves anything
+  // else on screen.
   const [showFailedCompanies, setShowFailedCompanies] = useState(false);
+  const failedCompaniesRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!showFailedCompanies) return;
+    function handleClickOutside(event: MouseEvent) {
+      if (failedCompaniesRef.current && !failedCompaniesRef.current.contains(event.target as Node)) {
+        setShowFailedCompanies(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showFailedCompanies]);
   // Company-name search (Aman's own sketch, 2026-09-03) - filters
   // whatever the active tab already loaded, client-side. Deliberately
   // NOT sent to the backend as a query param: the jobs for a tab are
@@ -117,21 +138,27 @@ export function JobsPage() {
           to just the count by default; the company names themselves
           are one click away, not forced in front of every refresh. */}
       {failedCompanies.length > 0 && (
-        <div className="failed-companies-row">
+        <div className="failed-companies-row" ref={failedCompaniesRef}>
           <button
             type="button"
             className="failed-companies-toggle"
             onClick={() => setShowFailedCompanies((prev) => !prev)}
+            aria-haspopup="true"
             aria-expanded={showFailedCompanies}
           >
             {failedCompanies.length} {failedCompanies.length === 1 ? "company" : "companies"} failed to fetch
           </button>
           {showFailedCompanies && (
-            <ul className="failed-companies-list">
-              {failedCompanies.map((name) => (
-                <li key={name}>{name}</li>
-              ))}
-            </ul>
+            <div className="failed-companies-popover" role="alert">
+              <p className="failed-companies-popover-title">
+                Couldn't fetch the latest jobs for {failedCompanies.length === 1 ? "this company" : "these companies"}:
+              </p>
+              <ul className="failed-companies-list">
+                {failedCompanies.map((name) => (
+                  <li key={name}>{name}</li>
+                ))}
+              </ul>
+            </div>
           )}
         </div>
       )}
