@@ -11,10 +11,11 @@ import { useAuth } from "../hooks/useAuth";
  * navigation, so a direct URL visit or a page reload both still work,
  * not just arriving here by clicking the edit icon on CompaniesPage.
  *
- * A company whose CURRENT platform isn't one of the five self-service
- * ones (i.e. one of the original amazon/deshaw/atlassian/pcsx rows -
- * see SelfServicePlatform's own docstring) can't be represented in
- * this form's dropdown at all - editing those stays a direct-database
+ * A company whose CURRENT platform isn't one of the self-service ones
+ * (i.e. one of the amazon/deshaw/atlassian/goldman_sachs rows - see
+ * SelfServicePlatform's own docstring for why pcsx is no longer in
+ * that bucket) can't be represented in this form's dropdown at all -
+ * editing those stays a direct-database
  * action, the same known limitation PUT /companies/{id} itself
  * documents server-side. This page doesn't special-case that; the
  * dropdown just falls back to "greenhouse" as a starting point, and
@@ -47,7 +48,7 @@ export function EditCompanyPage() {
         // See this component's own docstring - a non-self-service
         // platform has no matching <option>, so the dropdown falls
         // back to its own default rather than showing nothing selected.
-        const knownPlatforms: SelfServicePlatform[] = ["greenhouse", "lever", "ashby", "smartrecruiters", "workday", "oracle_cloud"];
+        const knownPlatforms: SelfServicePlatform[] = ["greenhouse", "lever", "ashby", "smartrecruiters", "workday", "oracle_cloud", "pcsx"];
         if ((knownPlatforms as string[]).includes(company.platform)) {
           setPlatform(company.platform as SelfServicePlatform);
         }

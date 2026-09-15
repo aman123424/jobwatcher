@@ -690,21 +690,29 @@ def clear_job_status(
 
 # The subset of Platform (see models.py) an admin can pick for a NEW
 # company through this form - deliberately narrower than the full
-# enum. amazon/deshaw/atlassian/pcsx are already real values on
-# EXISTING companies (Amazon, DE Shaw, Atlassian, Microsoft - see
-# companies.py), so Platform itself still has to include them for
-# those rows' sake, but their fetch_* functions (see fetchers.py) are
-# hardcoded to that ONE specific company's own endpoint - fetch_atlassian
-# ignores its slug argument entirely and always hits Atlassian's own
-# careers feed, no matter what company row points at it. Letting an
-# admin pick one of these for a genuinely NEW company wouldn't add
-# that company at all, it would silently create a row that just
-# re-fetches an existing company's jobs under a different name - a
-# real data-integrity bug, not just an inconvenience. greenhouse,
-# lever, ashby, smartrecruiters, workday, and oracle_cloud are the ones that
-# are actually generic - any company's own board, addressed by ITS OWN
-# slug - which is what makes them safe for self-service.
-SelfServicePlatform = Literal["greenhouse", "lever", "ashby", "smartrecruiters", "workday", "oracle_cloud"]
+# enum. amazon/deshaw/atlassian/goldman_sachs are already real values
+# on EXISTING companies (see companies.py), so Platform itself still
+# has to include them for those rows' sake, but their fetch_*
+# functions (see fetchers/) are hardcoded to that ONE specific
+# company's own endpoint - fetch_atlassian ignores its slug argument
+# entirely and always hits Atlassian's own careers feed, no matter
+# what company row points at it. Letting an admin pick one of these
+# for a genuinely NEW company wouldn't add that company at all, it
+# would silently create a row that just re-fetches an existing
+# company's jobs under a different name - a real data-integrity bug,
+# not just an inconvenience.
+#
+# pcsx is DELIBERATELY included here, unlike those four (added
+# 2026-09-15) - it used to be excluded for the same "hardcoded to one
+# company" reason, back when it only knew about Qualcomm, but
+# fetch_pcsx (fetchers/pcsx.py) has since been generalized to take a
+# "host|domain|location|keywords" config string - confirmed live
+# reusable across Qualcomm, Microsoft, AND UKG (a third, unrelated
+# company, added self-service through this exact form) before this
+# comment was written. Same "any company's own board, addressed by
+# ITS OWN slug" property greenhouse/lever/etc. already have - just a
+# 4-part slug instead of a single board name.
+SelfServicePlatform = Literal["greenhouse", "lever", "ashby", "smartrecruiters", "workday", "oracle_cloud", "pcsx"]
 
 
 class CreateCompanyRequest(BaseModel):
@@ -807,11 +815,12 @@ def update_company(
     Admin-only. Same SelfServicePlatform restriction as create (see
     its own comment above) - deliberately, not just for new companies:
     letting an edit repoint an EXISTING company at one of the
-    hardcoded-to-one-company fetchers (amazon/deshaw/atlassian/pcsx)
-    would break that company's fetching too. Editing one of those
-    original four (Amazon/DE Shaw/Atlassian/Microsoft) themselves
-    stays a direct-database action, same as it always has been - a
-    known, deliberate limitation of this admin UI, not an oversight.
+    hardcoded-to-one-company fetchers (amazon/deshaw/atlassian/
+    goldman_sachs - NOT pcsx anymore, see SelfServicePlatform's own
+    comment for why) would break that company's fetching too. Editing
+    one of those four themselves stays a direct-database action, same
+    as it always has been - a known, deliberate limitation of this
+    admin UI, not an oversight.
     """
     company = db.get(Company, company_id)
     if company is None:

@@ -92,7 +92,7 @@ export interface RefreshSummary {
  * wouldn't add it at all, just silently re-fetch an existing
  * company's jobs under a different name.
  */
-export type SelfServicePlatform = "greenhouse" | "lever" | "ashby" | "smartrecruiters" | "workday" | "oracle_cloud";
+export type SelfServicePlatform = "greenhouse" | "lever" | "ashby" | "smartrecruiters" | "workday" | "oracle_cloud" | "pcsx";
 
 /** What POST /companies and PUT /companies/{id} both expect - mirrors backend/api.py's CreateCompanyRequest (reused for both create and update, same shape). */
 export interface CreateCompanyPayload {
