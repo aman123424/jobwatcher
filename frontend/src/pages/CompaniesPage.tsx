@@ -7,17 +7,21 @@ import type { CompanyOut } from "../api/types";
 import { useAuth } from "../hooks/useAuth";
 
 /**
- * Admin-only company management (see App.tsx's adminOnly route) -
- * same page shell as JobsPage (AppHeader, a top action row, a search
- * row, then a list), but for `companies` instead of `jobs`: "+ Add
- * Company" replaces "Refresh Jobs" in the top row (Aman's own
- * placement, 2026-09-04 - this page IS the admin area, so unlike the
- * old button on the jobs page, no separate is_admin check is needed
- * here beyond the route itself already requiring it), and each row is
- * a CompanyCard (name, platform, edit/delete) instead of a JobCard.
+ * Visible to every logged-in user (changed 2026-09-15, was admin-only
+ * end to end - see App.tsx's route, now NOT adminOnly) - same page
+ * shell as JobsPage (AppHeader, a top action row, a search row, then a
+ * list), but for `companies` instead of `jobs`: "+ Add Company"
+ * replaces "Refresh Jobs" in the top row.
+ *
+ * "+ Add Company" itself IS still admin-only, unlike the page as a
+ * whole now - gated here on `user?.is_admin`, same pattern the old
+ * jobs-page button used before this page existed, and the same
+ * "UI check is a convenience, the server is the real gate" reasoning
+ * CompanyCard.tsx's own edit/delete buttons follow (POST /companies
+ * still requires get_current_admin regardless of what this page shows).
  */
 export function CompaniesPage() {
-  const { token, logout } = useAuth();
+  const { token, user, logout } = useAuth();
   const [companies, setCompanies] = useState<CompanyOut[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -81,11 +85,13 @@ export function CompaniesPage() {
     <div className="jobs-page">
       <AppHeader />
 
-      <div className="refresh-row">
-        <Link to="/add-company" className="refresh-button">
-          + Add Company
-        </Link>
-      </div>
+      {user?.is_admin && (
+        <div className="refresh-row">
+          <Link to="/add-company" className="refresh-button">
+            + Add Company
+          </Link>
+        </div>
+      )}
 
       <div className="jobs-filter-row">
         <input
@@ -110,7 +116,7 @@ export function CompaniesPage() {
         ) : (
           <div className="job-list">
             {filteredCompanies.map((company) => (
-              <CompanyCard key={company.id} company={company} onDelete={handleDelete} />
+              <CompanyCard key={company.id} company={company} onDelete={handleDelete} isAdmin={user?.is_admin ?? false} />
             ))}
           </div>
         )}

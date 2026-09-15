@@ -733,8 +733,18 @@ def _to_company_out(company: Company) -> CompanyOut:
 
 
 @app.get("/companies", response_model=list[CompanyOut])
-def list_companies(db: Session = Depends(get_db), admin: User = Depends(get_current_admin)):
-    """Admin-only - the full `companies` list backing the /companies management page (CompaniesPage.tsx), not the job feed. Alphabetical, since there's no other natural order for an admin scanning for one company by name."""
+def list_companies(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """
+    Any logged-in user (changed 2026-09-15, was admin-only) - the full
+    `companies` list backing the /companies page (CompaniesPage.tsx).
+    Just a read of non-sensitive data (name/platform/slug - nothing
+    user-specific or private), so there's no real reason a non-admin
+    couldn't see which companies this tool tracks. The actual
+    management actions (add/edit/delete) stay admin-gated below -
+    this endpoint alone becoming readable doesn't change who can
+    change anything. Alphabetical, since there's no other natural
+    order for someone scanning for one company by name.
+    """
     companies = db.query(Company).order_by(Company.name).all()
     return [_to_company_out(c) for c in companies]
 

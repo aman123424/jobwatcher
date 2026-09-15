@@ -13,16 +13,20 @@ interface AvatarMenuProps {
  * instead of navigating straight to /profile (Aman's sketch, 2026-09-03)
  * - "View Profile" and "Logout" both live here now, so the header no
  * longer needs its own separate Log out button next to it. "Companies"
- * (2026-09-04) is admin-only, same is_admin check as everywhere else
- * admin UI is gated - the real access control is still server-side
- * (get_current_admin on every /companies endpoint), this just avoids
- * showing a dead-end menu item to everyone else.
+ * is visible to every logged-in user (changed 2026-09-15, was
+ * admin-only) - the list itself is just non-sensitive read data now
+ * (see api.py's list_companies); only the add/edit/delete actions on
+ * that page stay admin-gated, both in the UI (CompaniesPage.tsx/
+ * CompanyCard.tsx check is_admin before rendering those controls) and
+ * for real on the server (get_current_admin on every mutating
+ * /companies endpoint) - the UI check alone is never the actual
+ * security boundary.
  */
 export function AvatarMenu({ name }: AvatarMenuProps) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { logout } = useAuth();
 
   // Closes the dropdown on a click anywhere outside it - only
   // listens while actually open, so this isn't one more permanent
@@ -82,15 +86,13 @@ export function AvatarMenu({ name }: AvatarMenuProps) {
             </svg>
             View Profile
           </button>
-          {user?.is_admin && (
-            <button type="button" className="avatar-dropdown-item" role="menuitem" onClick={handleCompanies}>
-              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <rect x="4" y="3" width="10" height="18" rx="1" stroke="currentColor" strokeWidth="1.6" />
-                <path d="M14 9h6v12h-6M7 7h1M10 7h1M7 10h1M10 10h1M7 13h1M10 13h1" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-              </svg>
-              Companies
-            </button>
-          )}
+          <button type="button" className="avatar-dropdown-item" role="menuitem" onClick={handleCompanies}>
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <rect x="4" y="3" width="10" height="18" rx="1" stroke="currentColor" strokeWidth="1.6" />
+              <path d="M14 9h6v12h-6M7 7h1M10 7h1M7 10h1M10 10h1M7 13h1M10 13h1" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+            </svg>
+            Companies
+          </button>
           <button type="button" className="avatar-dropdown-item" role="menuitem" onClick={handleLogout}>
             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path
