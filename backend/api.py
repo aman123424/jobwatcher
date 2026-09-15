@@ -712,7 +712,17 @@ def clear_job_status(
 # comment was written. Same "any company's own board, addressed by
 # ITS OWN slug" property greenhouse/lever/etc. already have - just a
 # 4-part slug instead of a single board name.
-SelfServicePlatform = Literal["greenhouse", "lever", "ashby", "smartrecruiters", "workday", "oracle_cloud", "pcsx"]
+#
+# zoho_recruit (added 2026-09-15, same day) is the simplest of all of
+# these - fetch_zoho_recruit (fetchers/zoho_recruit.py) takes just a
+# bare domain, no compound slug at all, confirmed live reusable across
+# THREE unrelated companies (Wissen Technology, ITC, VinFast) before
+# this comment was written - both a direct "*.zohorecruit.in"
+# subdomain and a fully custom-mapped domain (ITC's
+# recruitment.itcportal.com) confirmed to expose the identical API.
+SelfServicePlatform = Literal[
+    "greenhouse", "lever", "ashby", "smartrecruiters", "workday", "oracle_cloud", "pcsx", "zoho_recruit"
+]
 
 
 class CreateCompanyRequest(BaseModel):

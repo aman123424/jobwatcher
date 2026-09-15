@@ -97,6 +97,7 @@ class Platform(str, enum.Enum):
     atlassian = "atlassian"
     talentbrew = "talentbrew"
     goldman_sachs = "goldman_sachs"
+    zoho_recruit = "zoho_recruit"
 
 
 class SkillImportance(str, enum.Enum):

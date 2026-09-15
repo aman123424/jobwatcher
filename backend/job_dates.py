@@ -112,6 +112,9 @@ def parse_posted_datetime(job: dict):
       - Oracle Fusion Cloud Recruiting: a real "YYYY-MM-DD" date
         (PostedDate) - day precision, no time-of-day, same as Amazon's
         day-only dates below - becomes midnight UTC on that date.
+      - Zoho Recruit: a real "MM/DD/YYYY" date (Date_Opened) - day
+        precision, no time-of-day, same day-only handling as above,
+        just a different date SHAPE.
       - DE Shaw: no posted-date field in the API response AT ALL - this
         always returns None for DE Shaw jobs, meaning "we genuinely
         cannot tell how old this posting is," not "it's very old" or
@@ -168,6 +171,18 @@ def parse_posted_datetime(job: dict):
         # here already uses.
         try:
             dt = datetime.strptime(updated_at, "%Y-%m-%d")
+        except ValueError:
+            return None
+        return dt.replace(tzinfo=timezone.utc)
+
+    if platform == "zoho_recruit":
+        # "MM/DD/YYYY", day precision only - confirmed identical on
+        # both ITC and Wissen (see fetch_zoho_recruit's own docstring)
+        # despite everything else about their Zoho Recruit setups
+        # differing. Same day-only midnight-UTC honesty as Amazon/
+        # Oracle Cloud above.
+        try:
+            dt = datetime.strptime(updated_at, "%m/%d/%Y")
         except ValueError:
             return None
         return dt.replace(tzinfo=timezone.utc)

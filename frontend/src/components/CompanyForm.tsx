@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import type { SelfServicePlatform } from "../api/types";
 
 /** See SelfServicePlatform's own docstring in api/types.ts for why this list is narrower than every platform fetchers.py knows how to fetch. */
-const PLATFORMS: SelfServicePlatform[] = ["greenhouse", "lever", "ashby", "smartrecruiters", "workday", "oracle_cloud", "pcsx"];
+const PLATFORMS: SelfServicePlatform[] = ["greenhouse", "lever", "ashby", "smartrecruiters", "workday", "oracle_cloud", "pcsx", "zoho_recruit"];
 
 interface CompanyFormProps {
   title: string;
@@ -75,10 +75,12 @@ export function CompanyForm({
         </label>
         <p className="auth-subtitle">
           The platform-specific identifier used to fetch this company's board - a plain board slug for most
-          platforms, but a compound "|"-separated string for a few (e.g. Workday's "tenant|wdN|site", Oracle's
-          "tenant|dc|site" - leave dc empty, e.g. "jpmc||CX_1001", for a tenant whose real URL has no datacenter
-          segment - or pcsx's "host|domain|location|keywords", e.g. "apply.ukg.com|ukg.com|India|software,backend,frontend,full stack" -
-          location and keywords are both optional).
+          platforms (Zoho Recruit's is just the bare domain, e.g. "wissen.zohorecruit.in" or a custom-mapped
+          domain like "recruitment.itcportal.com"), but a compound "|"-separated string for a few (e.g.
+          Workday's "tenant|wdN|site", Oracle's "tenant|dc|site" - leave dc empty, e.g. "jpmc||CX_1001", for a
+          tenant whose real URL has no datacenter segment - or pcsx's "host|domain|location|keywords", e.g.
+          "apply.ukg.com|ukg.com|India|software,backend,frontend,full stack" - location and keywords are both
+          optional).
         </p>
 
         {error && <p className="auth-error">{error}</p>}
