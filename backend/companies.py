@@ -248,6 +248,16 @@ CUSTOM_COMPANIES = [
   # another company could also be on). Live-tested 2026-09-12: 997+
   # total roles, real India postings (Bengaluru).
   ("Goldman Sachs", "goldman_sachs", "no-config-needed"),
+  # Same "no per-company config needed" case again - fetch_pearson()
+  # (fetchers/pearson.py) always hits the same fixed NLx/
+  # DirectEmployers search endpoint with a hardcoded x-origin header
+  # ("pearson.jobs"). Deliberately filed as one-off custom, NOT a new
+  # reusable Tier - several other real DirectEmployers-affiliated
+  # companies' likely domains were tried live as the origin value and
+  # every one 404'd (see fetch_pearson's own docstring). Live-tested
+  # 2026-09-16: 100 total India postings, real Software Engineer
+  # titles (Bangalore/Chennai), full descriptions included for free.
+  ("Pearson", "pearson", "no-config-needed"),
 ]
 
 # PAUSED, NOT FORGOTTEN (Aman's own call, 2026-09-05) - Optum, via
