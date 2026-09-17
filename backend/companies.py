@@ -159,8 +159,6 @@ NEEDS_MORE_INFO = [
     # (company, platform, what's given, what's missing / wrong)
     ("RudderStack", "greenhouse", "rudderstack",
      "404 on live test - slug is wrong or it's not actually on Greenhouse"),
-    ("Swiggy", "lever", "swiggy",
-     "404 on live test - slug is wrong or it's not actually on Lever"),
     ("HiLabs", "unknown", "",
      "CSV note says 'Custom Career Site' - not on any Tier 1/2 platform"),
 
@@ -258,6 +256,19 @@ CUSTOM_COMPANIES = [
   # 2026-09-16: 100 total India postings, real Software Engineer
   # titles (Bangalore/Chennai), full descriptions included for free.
   ("Pearson", "pearson", "no-config-needed"),
+  # mynexthire IS reusable (unlike Pearson above) - fetch_mynexthire()
+  # (fetchers/mynexthire.py) takes just a bare subdomain prefix, same
+  # simple shape as fetch_zoho_recruit's own `domain` argument. Only
+  # ONE company (Swiggy) confirmed live so far, but filed as a real
+  # tier because MyNextHire is a genuinely named, multi-tenant vendor
+  # product (see fetch_mynexthire's own docstring) - not an in-house
+  # system guessed to maybe generalize the way Pearson's NLx backend
+  # was tried and failed to. Live-tested 2026-09-17: 95 total India
+  # postings, but presently almost entirely Sales/Business roles - only
+  # a handful of Data Science titles pass relevance filtering today.
+  # Kept in anyway so it silently starts surfacing SWE roles the moment
+  # Swiggy actually posts any, with zero further work needed.
+  ("Swiggy", "mynexthire", "swiggy"),
 ]
 
 # PAUSED, NOT FORGOTTEN (Aman's own call, 2026-09-05) - Optum, via

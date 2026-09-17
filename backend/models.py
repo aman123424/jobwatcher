@@ -99,6 +99,7 @@ class Platform(str, enum.Enum):
     goldman_sachs = "goldman_sachs"
     zoho_recruit = "zoho_recruit"
     pearson = "pearson"
+    mynexthire = "mynexthire"
 
 
 class SkillImportance(str, enum.Enum):

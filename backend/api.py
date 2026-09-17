@@ -720,8 +720,18 @@ def clear_job_status(
 # this comment was written - both a direct "*.zohorecruit.in"
 # subdomain and a fully custom-mapped domain (ITC's
 # recruitment.itcportal.com) confirmed to expose the identical API.
+#
+# mynexthire (added 2026-09-17) - fetch_mynexthire (fetchers/
+# mynexthire.py) takes just a bare subdomain prefix, same simple shape
+# as zoho_recruit's own domain argument. Only ONE company (Swiggy)
+# confirmed live so far, unlike pcsx/zoho_recruit's 3+ - included here
+# anyway because MyNextHire is a genuinely named, multi-tenant vendor
+# product (confirmed by its own page title, "powered by Smaclify
+# Technologies"), not a company-specific system being guessed at, per
+# Aman's own call to build it as a real tier from company one.
 SelfServicePlatform = Literal[
-    "greenhouse", "lever", "ashby", "smartrecruiters", "workday", "oracle_cloud", "pcsx", "zoho_recruit"
+    "greenhouse", "lever", "ashby", "smartrecruiters", "workday", "oracle_cloud", "pcsx", "zoho_recruit",
+    "mynexthire",
 ]
 
 
