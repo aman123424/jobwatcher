@@ -269,6 +269,14 @@ CUSTOM_COMPANIES = [
   # Kept in anyway so it silently starts surfacing SWE roles the moment
   # Swiggy actually posts any, with zero further work needed.
   ("Swiggy", "mynexthire", "swiggy"),
+  # jibe IS reusable - fetch_jibe() (fetchers/jibe.py) takes a bare
+  # careers hostname; confirmed live on both companies below.
+  # Live-tested 2026-09-18: Docusign 19 India jobs (10 title-relevant).
+  # Schneider Electric (careers.se.com) runs the same API but its WAF
+  # returns 403 to this project's custom User-Agent (fine with a
+  # generic one) - deliberately NOT added until Aman decides whether
+  # to override the UA for that host. See fetch_jibe's docstring.
+  ("Docusign", "jibe", "careers.docusign.com"),
 ]
 
 # PAUSED, NOT FORGOTTEN (Aman's own call, 2026-09-05) - Optum, via

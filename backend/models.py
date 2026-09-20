@@ -100,6 +100,7 @@ class Platform(str, enum.Enum):
     zoho_recruit = "zoho_recruit"
     pearson = "pearson"
     mynexthire = "mynexthire"
+    jibe = "jibe"
 
 
 class SkillImportance(str, enum.Enum):

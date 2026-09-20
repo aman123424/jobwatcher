@@ -10,7 +10,7 @@ interface CompanyCardProps {
 }
 
 /** The platforms an admin can actually choose (see SelfServicePlatform's own docstring in api/types.ts) - every other real value (amazon/deshaw/atlassian/goldman_sachs) is a one-off fetcher hardcoded to that one specific existing company, so there's no generic "platform name" worth showing for those - "Custom ATS" says what it is without implying it's a reusable, pickable option. pcsx and zoho_recruit both moved OUT of that bucket the same day (2026-09-15), once each proved reusable across multiple unrelated companies. */
-const SELF_SERVICE_PLATFORMS = new Set(["greenhouse", "lever", "ashby", "smartrecruiters", "workday", "oracle_cloud", "pcsx", "zoho_recruit", "mynexthire"]);
+const SELF_SERVICE_PLATFORMS = new Set(["greenhouse", "lever", "ashby", "smartrecruiters", "workday", "oracle_cloud", "pcsx", "zoho_recruit", "mynexthire", "jibe"]);
 
 function platformLabel(platform: string): string {
   return SELF_SERVICE_PLATFORMS.has(platform) ? platform : "Custom ATS";

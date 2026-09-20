@@ -729,9 +729,12 @@ def clear_job_status(
 # product (confirmed by its own page title, "powered by Smaclify
 # Technologies"), not a company-specific system being guessed at, per
 # Aman's own call to build it as a real tier from company one.
+# jibe (added 2026-09-18) - fetch_jibe (fetchers/jibe.py) takes just a
+# bare careers hostname, confirmed live reusable across Docusign and
+# Schneider Electric (two unrelated companies on iCIMS Jibe).
 SelfServicePlatform = Literal[
     "greenhouse", "lever", "ashby", "smartrecruiters", "workday", "oracle_cloud", "pcsx", "zoho_recruit",
-    "mynexthire",
+    "mynexthire", "jibe",
 ]
 
 

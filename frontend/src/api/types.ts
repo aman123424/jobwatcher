@@ -101,7 +101,8 @@ export type SelfServicePlatform =
   | "oracle_cloud"
   | "pcsx"
   | "zoho_recruit"
-  | "mynexthire";
+  | "mynexthire"
+  | "jibe";
 
 /** What POST /companies and PUT /companies/{id} both expect - mirrors backend/api.py's CreateCompanyRequest (reused for both create and update, same shape). */
 export interface CreateCompanyPayload {

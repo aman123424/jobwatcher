@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import type { SelfServicePlatform } from "../api/types";
 
 /** See SelfServicePlatform's own docstring in api/types.ts for why this list is narrower than every platform fetchers.py knows how to fetch. */
-const PLATFORMS: SelfServicePlatform[] = ["greenhouse", "lever", "ashby", "smartrecruiters", "workday", "oracle_cloud", "pcsx", "zoho_recruit", "mynexthire"];
+const PLATFORMS: SelfServicePlatform[] = ["greenhouse", "lever", "ashby", "smartrecruiters", "workday", "oracle_cloud", "pcsx", "zoho_recruit", "mynexthire", "jibe"];
 
 interface CompanyFormProps {
   title: string;
