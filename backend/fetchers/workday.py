@@ -78,12 +78,20 @@ def fetch_workday(display_name: str, tenant_wd_site: str) -> list[dict]:
     postings are confirmed stale (see FRESHNESS_WINDOW_DAYS in common.py).
     """
     parts = tenant_wd_site.split("|")
-    if len(parts) != 3:
+    if len(parts) not in (3, 4):
         print(f"  [WARN] {display_name}: malformed Workday identifier "
-              f"'{tenant_wd_site}' (expected tenant|wdN|site) - skipping")
+              f"'{tenant_wd_site}' (expected tenant|wdN|site[|searchText]) - skipping")
         record_fetch_failure(f"malformed Workday identifier '{tenant_wd_site}'")
         return []
-    tenant, wd_num, site = parts
+    tenant, wd_num, site = parts[:3]
+    # OPTIONAL 4th part: Workday's own server-side searchText. Added
+    # 2026-09-21 for Target, whose tenant started listing ~2000 mostly-US
+    # store postings ALL as "Posted Today", so the early-stop never
+    # fired and 100 sequential pages took ~153s (over the 120s Lambda
+    # limit, breaking every refresh). "Bangalore" scopes it to 75
+    # postings (4 requests) and was confirmed to be a superset of
+    # "Bengaluru". Not "India" - that matches Indiana's "IN" state code.
+    search_text = parts[3] if len(parts) == 4 else ""
 
     url = f"https://{tenant}.{wd_num}.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs"
 
@@ -102,7 +110,7 @@ def fetch_workday(display_name: str, tenant_wd_site: str) -> list[dict]:
         # request failures or 403s, that's a genuinely different
         # symptom from what we've seen so far, and would be worth
         # revisiting this.
-        body = {"appliedFacets": {}, "limit": page_size, "offset": offset, "searchText": ""}
+        body = {"appliedFacets": {}, "limit": page_size, "offset": offset, "searchText": search_text}
         try:
             resp = SESSION.post(url, json=body, timeout=TIMEOUT)
             resp.raise_for_status()

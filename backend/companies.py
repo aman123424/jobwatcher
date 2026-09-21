@@ -125,7 +125,7 @@ TIER2_COMPANIES = [
     ("IQVIA",        "workday", "iqvia|wd1|iqvia"),
     ("PayPal",       "workday", "paypal|wd1|jobs"),
     ("Intel",        "workday", "intel|wd1|external"),
-    ("Target",       "workday", "target|wd5|targetcareers"),
+    ("Target",       "workday", "target|wd5|targetcareers|Bangalore"),
     ("Airbus",       "workday", "ag|wd3|Airbus"),
     ("Wells Fargo",  "workday", "wf|wd1|WellsFargoJobs"),
     ("CaterPillar",  "workday", "cat|wd5|CaterpillarCareers"),
@@ -323,7 +323,7 @@ if __name__ == "__main__":
         # Media.net/Airbus automatically, instead of us finding out
         # only by reading the CSV by hand. Cheap check, real value.
         parts = slug.split("|")
-        assert len(parts) == 3, f"{name}: malformed Workday slug '{slug}' (need tenant|wdN|site)"
+        assert len(parts) in (3, 4), f"{name}: malformed Workday slug '{slug}' (need tenant|wdN|site[|searchText])"
 
     for name, platform, slug in ORACLE_COMPANIES:
         assert platform == "oracle_cloud", f"{name}: ORACLE_COMPANIES should only contain oracle_cloud"
