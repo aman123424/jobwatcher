@@ -2,7 +2,11 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { AppHeader } from "../components/AppHeader";
 import { CompanyCard } from "../components/CompanyCard";
-import { deleteCompany, fetchCompanies, UnauthorizedError } from "../api/client";
+import {
+  deleteCompany,
+  fetchCompanies,
+  UnauthorizedError,
+} from "../api/client";
 import type { CompanyOut } from "../api/types";
 import { useAuth } from "../hooks/useAuth";
 
@@ -42,7 +46,9 @@ export function CompaniesPage() {
           logout();
           return;
         }
-        setError(err instanceof Error ? err.message : "Failed to load companies.");
+        setError(
+          err instanceof Error ? err.message : "Failed to load companies.",
+        );
       } finally {
         if (!cancelled) setIsLoading(false);
       }
@@ -73,12 +79,16 @@ export function CompaniesPage() {
         logout();
         return;
       }
-      setError(err instanceof Error ? err.message : "Failed to delete company.");
+      setError(
+        err instanceof Error ? err.message : "Failed to delete company.",
+      );
     }
   }
 
   const filteredCompanies = search.trim()
-    ? companies.filter((c) => c.name.toLowerCase().includes(search.trim().toLowerCase()))
+    ? companies.filter((c) =>
+        c.name.toLowerCase().includes(search.trim().toLowerCase()),
+      )
     : companies;
 
   return (
@@ -93,11 +103,15 @@ export function CompaniesPage() {
         </div>
       )}
 
+      {user?.is_admin && (
+        <div>Total number of companies: {companies.length}</div>
+      )}
+
       <div className="jobs-filter-row">
         <input
           type="text"
           className="company-search-input"
-          placeholder="Search companies"
+          placeholder="Search companies..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           aria-label="Search companies"
@@ -111,12 +125,19 @@ export function CompaniesPage() {
           <p className="job-list-status">Loading…</p>
         ) : filteredCompanies.length === 0 ? (
           <p className="job-list-status">
-            {search.trim() ? `No companies match "${search.trim()}".` : "No companies yet."}
+            {search.trim()
+              ? `No companies match "${search.trim()}".`
+              : "No companies yet."}
           </p>
         ) : (
           <div className="job-list">
             {filteredCompanies.map((company) => (
-              <CompanyCard key={company.id} company={company} onDelete={handleDelete} isAdmin={user?.is_admin ?? false} />
+              <CompanyCard
+                key={company.id}
+                company={company}
+                onDelete={handleDelete}
+                isAdmin={user?.is_admin ?? false}
+              />
             ))}
           </div>
         )}
