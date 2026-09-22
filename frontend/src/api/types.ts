@@ -127,6 +127,14 @@ export interface CompanyOut {
   slug: string;
 }
 
+/** Mirrors backend/api.py's UserOut - what GET /users (admin-only) returns, backing AllUsersPage.tsx. */
+export interface UserOut {
+  name: string;
+  email: string;
+  tier: "free" | "paid";
+  resume_url: string | null;
+}
+
 /**
  * One job's resume-fit score/reasoning, as the admin-only score page
  * sees it - mirrors backend/api.py's JobScoreOut. `source` tells the

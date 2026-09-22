@@ -26,7 +26,7 @@ export function AppHeader() {
       </h1>
       <div className="jobs-page-header-right">
         <ThemeToggle />
-        {user && <AvatarMenu name={user.name} />}
+        {user && <AvatarMenu name={user.name} isAdmin={user.is_admin} />}
       </div>
     </header>
   );

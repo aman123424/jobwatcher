@@ -10,6 +10,7 @@ import type {
   RegisterPayload,
   SetJobScorePayload,
   TailoringReportOut,
+  UserOut,
 } from "./types";
 
 /**
@@ -292,6 +293,11 @@ export function fetchCompanies(token: string): Promise<CompanyOut[]> {
 /** GET /companies/{id} - admin-only; what EditCompanyPage.tsx loads a company's current values from. */
 export function fetchCompany(token: string, companyId: string): Promise<CompanyOut> {
   return request<CompanyOut>(`/companies/${companyId}`, { headers: authHeaders(token) });
+}
+
+/** GET /users - admin-only; the full list backing AllUsersPage.tsx. */
+export function fetchUsers(token: string): Promise<UserOut[]> {
+  return request<UserOut[]>("/users", { headers: authHeaders(token) });
 }
 
 /** POST /companies - admin-only (see api.py's get_current_admin); adds a company that starts getting fetched from the next Refresh Jobs onward. A non-admin token gets a 403, surfaced by request()'s normal error handling - same as any other failure. */

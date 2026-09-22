@@ -868,6 +868,28 @@ def update_company(
     return _to_company_out(company)
 
 
+class UserOut(BaseModel):
+    name: str
+    email: str
+    tier: str
+    resume_url: str | None
+
+
+@app.get("/users", response_model=list[UserOut])
+def list_users(db: Session = Depends(get_db), admin: User = Depends(get_current_admin)):
+    """
+    Admin-only - backs the "All Users" page (AllUsersPage.tsx), reached
+    from AvatarMenu.tsx same as Companies/Profile. Deliberately returns
+    only name/email/tier/resume_url, NOT every column on User - no
+    password_hash (obviously), no id/is_admin/email_verified/
+    scoring_logic, none of which this page has any use for. Ordered by
+    name, same "alphabetical, no other natural order for scanning a
+    list" reasoning as GET /companies above.
+    """
+    users = db.query(User).order_by(User.name).all()
+    return [UserOut(name=u.name, email=u.email, tier=u.tier.value, resume_url=u.resume_url) for u in users]
+
+
 @app.delete("/companies/{company_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_company(company_id: str, db: Session = Depends(get_db), admin: User = Depends(get_current_admin)):
     """

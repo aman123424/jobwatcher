@@ -6,6 +6,8 @@ import { getInitials } from "../utils/initials";
 
 interface AvatarMenuProps {
   name: string;
+  /** Gates the "All Users" item below (also gated server-side - GET /users requires get_current_admin, same "UI check is a convenience, not the real boundary" reasoning as everywhere else admin-only UI shows up in this app). */
+  isAdmin: boolean;
 }
 
 /**
@@ -22,7 +24,7 @@ interface AvatarMenuProps {
  * /companies endpoint) - the UI check alone is never the actual
  * security boundary.
  */
-export function AvatarMenu({ name }: AvatarMenuProps) {
+export function AvatarMenu({ name, isAdmin }: AvatarMenuProps) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
@@ -50,6 +52,11 @@ export function AvatarMenu({ name }: AvatarMenuProps) {
   function handleCompanies() {
     setOpen(false);
     navigate("/companies");
+  }
+
+  function handleAllUsers() {
+    setOpen(false);
+    navigate("/users");
   }
 
   function handleLogout() {
@@ -93,6 +100,27 @@ export function AvatarMenu({ name }: AvatarMenuProps) {
             </svg>
             Companies
           </button>
+          {isAdmin && (
+            <button type="button" className="avatar-dropdown-item" role="menuitem" onClick={handleAllUsers}>
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle cx="8.5" cy="8" r="3" stroke="currentColor" strokeWidth="1.6" />
+                <path
+                  d="M2.5 19c1-3.2 3.4-5 6-5s5 1.8 6 5"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                />
+                <circle cx="16.5" cy="8.5" r="2.5" stroke="currentColor" strokeWidth="1.6" />
+                <path
+                  d="M15 14.3c2.3.3 4.1 1.9 4.9 4.7"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                />
+              </svg>
+              All Users
+            </button>
+          )}
           <button type="button" className="avatar-dropdown-item" role="menuitem" onClick={handleLogout}>
             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path

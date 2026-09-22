@@ -4,6 +4,7 @@ import { ProtectedRoute } from "./components/ProtectedRoute";
 import { AuthProvider } from "./hooks/useAuth";
 import { ThemeProvider } from "./hooks/useTheme";
 import { AddCompanyPage } from "./pages/AddCompanyPage";
+import { AllUsersPage } from "./pages/AllUsersPage";
 import { CompaniesPage } from "./pages/CompaniesPage";
 import { EditCompanyPage } from "./pages/EditCompanyPage";
 import { JobScorePage } from "./pages/JobScorePage";
@@ -50,6 +51,14 @@ function App() {
               element={
                 <ProtectedRoute>
                   <CompaniesPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/users"
+              element={
+                <ProtectedRoute adminOnly>
+                  <AllUsersPage />
                 </ProtectedRoute>
               }
             />
